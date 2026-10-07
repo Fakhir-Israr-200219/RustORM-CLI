@@ -1,0 +1,168 @@
+RUSTORM CLI
+│
+├── 1. SCHEMA LANGUAGE
+│   ├── Model syntax                 ✅
+│   ├── Scalar types                 ✅
+│   ├── Nullable fields              ✅
+│   ├── Array fields                 ✅
+│   ├── Model references             ✅
+│   ├── @id                          ✅
+│   ├── @unique                      ✅
+│   ├── @default                     ✅
+│   ├── @map                         ✅
+│   ├── @updatedAt                   ✅
+│   ├── @relation                     ✅
+│   ├── onDelete                     ✅
+│   ├── @@map                        ✅
+│   ├── @@index                      ✅
+│   └── @@unique                     ✅
+│
+├── 2. LEXER
+│   ├── Identifiers                  ✅
+│   ├── Strings                      ✅
+│   ├── Numbers                      ✅
+│   ├── Symbols                      ✅
+│   ├── Comments                     ✅
+│   ├── Invalid character detection  ✅
+│   └── Unterminated string detection✅
+│
+├── 3. PARSER
+│   ├── Parse models                 ✅
+│   ├── Parse fields                 ✅
+│   ├── Parse types                  ✅
+│   ├── Parse nullable               ✅
+│   ├── Parse arrays                 ✅
+│   ├── Parse field attributes       ✅
+│   ├── Parse model attributes       ✅
+│   ├── Parse relations              ✅
+│   ├── Parse relation arguments     ✅
+│   └── Parse referential actions    ✅
+│
+├── 4. SCHEMA AST
+│   ├── Schema                      ✅
+│   ├── Model                       ✅
+│   ├── Field                       ✅
+│   ├── FieldType                   ✅
+│   ├── FieldAttribute              ✅
+│   ├── DefaultValue                ✅
+│   ├── RelationAttribute           ✅
+│   ├── ReferentialAction            ✅
+│   └── ModelAttribute              ✅
+│
+├── 5. VALIDATOR
+│   ├── Duplicate models             ✅
+│   ├── Duplicate fields             ✅
+│   ├── Unknown model references     ✅
+│   ├── Missing primary key          ✅
+│   ├── Multiple primary keys        ✅
+│   ├── Unknown relation fields      ✅
+│   ├── Unknown relation references  ✅
+│   └── Relation length validation   ✅
+│
+├── 6. ENTITY GENERATOR
+│   ├── Generate Model struct        ✅
+│   ├── Generate Entity struct       ✅
+│   ├── Generate Entity impl         ✅
+│   ├── Generate Columns             ✅
+│   ├── Generate Field constants     ✅
+│   ├── Generate output file         ✅
+│   ├── Scalar Rust types             ⏳
+│   ├── Nullable Rust types           ⏳
+│   ├── Array Rust types              ⏳
+│   ├── @map support                 ⏳
+│   ├── @@map support                ⏳
+│   ├── Relations generation         ⏳
+│   ├── Create structs               ⏳
+│   └── Update structs               ⏳
+│
+├── 7. MIGRATION GENERATOR
+│   ├── Read schema                  ⏳
+│   ├── Detect new models            ⏳
+│   ├── Generate CREATE TABLE        ⏳
+│   ├── Generate columns             ⏳
+│   ├── Generate primary keys        ⏳
+│   ├── Generate unique constraints  ⏳
+│   ├── Generate indexes             ⏳
+│   ├── Generate foreign keys        ⏳
+│   ├── Generate ON DELETE           ⏳
+│   ├── Generate ALTER TABLE         ⏳
+│   ├── Migration files              ⏳
+│   └── Migration history            ⏳
+│
+├── 8. CLI COMMANDS
+│   ├── rustorm generate             ⏳
+│   ├── rustorm migrate              ⏳
+│   ├── rustorm migrate dev          ⏳
+│   ├── rustorm migrate reset        ⏳
+│   ├── rustorm migrate status       ⏳
+│   └── rustorm validate             ⏳
+│
+├── 9. PROJECT INTEGRATION
+│   ├── Detect rust.schema            ⏳
+│   ├── Detect Cargo project          ⏳
+│   ├── Generated directory           ⏳
+│   ├── Generated module integration  ⏳
+│   ├── Runtime crate integration     ⏳
+│   └── Project configuration         ⏳
+│
+└── 10. CLI QUALITY
+    ├── Good error messages           ⏳
+    ├── Source location errors        ⏳
+    ├── Exit codes                   ⏳
+    ├── Help command                 ⏳
+    ├── Version command              ⏳
+    ├── Integration tests            ⏳
+    └── End-to-end tests             ⏳         
+                    
+                    
+                    G:\RustORM-CLI
+                           │
+                    rust.schema
+                           │
+                           ▼
+                       Parser
+                           │
+                           ▼
+                    Schema AST
+                           │
+                           ▼
+                      Validator
+                           │
+              ┌────────────┴────────────┐
+              ▼                         ▼
+       Entity Generator          Migration Generator
+              │                         │
+              ▼                         ▼
+       generated Rust              migrations/
+              │
+              ▼
+        User's Cargo.toml
+              │
+              ▼
+        rustorm dependency
+              │
+              ▼
+       EXISTING RUSTORM
+          CORE/RUNTIME
+
+
+Lexer                 ✅
+Parser                ✅
+AST                   ✅
+Basic validation      ✅
+Relation validation   ✅
+        ↓
+Validation edge cases ⬅️ ABHI
+        ↓
+Clean warnings
+        ↓
+V0.1 schema freeze
+        ↓
+Read rust.schema
+        ↓
+Generate Rust entities
+        ↓
+CLI: rustorm generate
+        ↓
+Migration system
+          
