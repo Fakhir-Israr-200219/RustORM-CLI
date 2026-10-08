@@ -207,6 +207,149 @@ The generated code should target the existing RustORM runtime API.
 
 
 
+                 rust.schema
+                     │
+                     ▼
+                  Parser
+                     │
+                     ▼
+              Schema Metadata
+                 /       \
+                /         \
+               ▼           ▼
+        Entity Generator   Migration Generator
+               │           │
+               ▼           ▼
+          src/entities/   migrations/
+               │
+               ▼
+          User's Rust App
+               │
+               ▼
+          rustorm APIs
+
+
+
+/myproject
+├── rust.schema
+├── /migrations
+│   ├── ...
+│
+├── /generated
+│   └── /entities
+│       ├── user.rs
+│       ├── post.rs
+│       └── mod.rs
+│
+└── /myrustproject
+    ├── /src
+    │   └── main.rs
+    └── Cargo.toml
+
+
+myproject/
+├── rust.schema
+├── migrations/
+└── myrustproject/
+    ├── Cargo.toml
+    └── src/
+        ├── main.rs
+        └── entities/
+            ├── mod.rs
+            ├── user.rs
+            └── post.rs
+
+
+
+Lekin ek cheez clear hai
+"Kuch generate na karna" technically possible nahi hai agar generated Rust entities compile-time par chahiye.
+Lekin "user ko generated files manually create/manage na karni padein" — bilkul possible hai.
+Ye difference important hai:
+
+❌ User manually:
+   entities/user.rs
+   entities/post.rs
+   mod.rs
+
+✅ RustORM:
+   rust.schema
+        ↓
+   rustorm generate
+        ↓
+   hidden/managed generated code
+        ↓
+   Rust compiler
+
+
+Aur main actually isi direction ko prefer karunga.
+Aur bhi better: rustorm library + CLI
+Architecture:
+
+rustorm/
+├── rustorm-core      ← hamara runtime/API
+├── rustorm-cli       ← schema/parser/generator/migrations
+└── rustorm-macros?   ← possibly later, if needed
+
+User project:
+
+my-app/
+├── rust.schema
+├── migrations/
+├── Cargo.toml
+└── src/
+    └── main.rs
+
+
+User:
+
+rustorm init
+rustorm generate
+rustorm migrate dev
+
+Aur code:
+
+use rustorm::prelude::*;
+
+let users = User::find()
+    .all(&db)
+    .await?;
+
+
+So architecture exactly ye hai
+
+
+                    rust.schema
+                         │
+                         ▼
+                  RustORM Generator
+                         │
+                         ▼
+                 ┌───────────────┐
+                 │ User Entity   │
+                 │ Post Entity   │
+                 │ Role Entity   │
+                 └───────────────┘
+                         │
+                         │
+                         ▼
+User code ───────► User::find()
+                         │
+                         ▼
+                  RustORM Runtime
+                  / Current Engine
+                         │
+              ┌──────────┼──────────┐
+              ▼          ▼          ▼
+            Query       CRUD     Relations
+              │
+              ▼
+            SQLx
+              │
+              ▼
+          PostgreSQL
+
+
+
                     G:\RustORM-CLI
                            │
                     rust.schema
@@ -238,23 +381,4 @@ The generated code should target the existing RustORM runtime API.
           CORE/RUNTIME
 
 
-Lexer                 ✅
-Parser                ✅
-AST                   ✅
-Basic validation      ✅
-Relation validation   ✅
-        ↓
-Validation edge cases ⬅️ ABHI
-        ↓
-Clean warnings
-        ↓
-V0.1 schema freeze
-        ↓
-Read rust.schema
-        ↓
-Generate Rust entities
-        ↓
-CLI: rustorm generate
-        ↓
-Migration system
           
