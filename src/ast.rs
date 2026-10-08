@@ -1,4 +1,3 @@
-
 #[derive(Debug, Clone, PartialEq)]
 pub struct Schema {
     pub models: Vec<Model>,
@@ -79,7 +78,6 @@ pub enum ModelAttribute {
     Index(Vec<String>),
     Unique(Vec<String>),
 }
-
 
 #[cfg(test)]
 mod tests {

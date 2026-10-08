@@ -1,9 +1,12 @@
 use crate::ast::{FieldAttribute, FieldType, Model, Schema};
 use std::fs;
 use std::path::Path;
-pub fn generate(schema: &Schema) -> String {
+#[derive(Debug, Clone, PartialEq)]
+pub enum GenerateError {
+    UnsupportedArrayField { model: String, field: String },
+}
+pub fn generate(schema: &Schema) -> Result<String, GenerateError> {
     let mut output = String::new();
-
     output.push_str(
         "use rustorm::{\n\
         entity::{Column, Entity, RelationKey, RelationLoader, SingleRelationLoader},\n\
@@ -16,13 +19,117 @@ pub fn generate(schema: &Schema) -> String {
     let relations = resolve_relations(schema);
 
     for model in &schema.models {
-        generate_model(model, &relations, &mut output);
+        generate_model(model, &relations, &mut output)?;
     }
 
-    output
+    Ok(output)
 }
+fn validate_model_crud_support(model: &Model) -> Result<(), GenerateError> {
+    for field in &model.fields {
+        if field.is_array && !matches!(field.field_type, FieldType::Model(_)) {
+            return Err(GenerateError::UnsupportedArrayField {
+                model: model.name.clone(),
+                field: field.name.clone(),
+            });
+        }
+    }
 
-fn generate_model(model: &Model, relations: &[ResolvedRelation], output: &mut String) {
+    Ok(())
+}
+fn generate_update_data(model: &Model, output: &mut String) {
+    output.push_str(&format!(
+        "impl rustorm::executor::UpdateData<{}> for {}Update {{\n",
+        model.name, model.name
+    ));
+
+    output.push_str("    fn columns(&self) -> Vec<&'static str> {\n");
+    output.push_str("        let mut columns = Vec::new();\n");
+
+    for field in update_data_fields(model) {
+        output.push_str(&format!("        if self.{}.is_some() {{\n", field.name));
+        output.push_str(&format!(
+            "            columns.push(\"{}\");\n",
+            column_name(field)
+        ));
+        output.push_str("        }\n");
+    }
+
+    output.push_str("        columns\n");
+    output.push_str("    }\n\n");
+
+    output.push_str("    fn values(&self) -> Vec<rustorm::value::BindValue> {\n");
+    output.push_str("        let mut values = Vec::new();\n");
+
+    for field in update_data_fields(model) {
+        output.push_str(&format!(
+            "        if let Some(value) = &self.{} {{\n",
+            field.name
+        ));
+
+        if field.nullable {
+            output.push_str("            match value {\n");
+
+            output.push_str("            values.push(");
+            generate_update_non_null_bind_value(field, "value", output);
+            output.push_str("),\n");
+
+            output.push_str(
+                "                None => values.push(rustorm::value::BindValue::Null),\n",
+            );
+
+            output.push_str("            }\n");
+        } else {
+            output.push_str("            values.push(");
+            generate_update_non_null_bind_value(field, "value", output);
+            output.push_str(");\n");
+        }
+
+        output.push_str("        }\n");
+    }
+
+    output.push_str("        values\n");
+    output.push_str("    }\n");
+    output.push_str("}\n\n");
+}
+fn update_data_fields(model: &Model) -> Vec<&crate::ast::Field> {
+    model
+        .fields
+        .iter()
+        .filter(|field| {
+            !matches!(field.field_type, FieldType::Model(_))
+                && !field
+                    .attributes
+                    .iter()
+                    .any(|attribute| matches!(attribute, FieldAttribute::Id))
+        })
+        .collect()
+}
+fn generate_update_struct(model: &Model, output: &mut String) {
+    output.push_str(&format!("pub struct {}Update {{\n", model.name));
+
+    for field in update_data_fields(model) {
+        let rust_type = if field.nullable {
+            format!(
+                "Option<Option<{}>>",
+                rust_type(&field.field_type, false, field.is_array)
+            )
+        } else {
+            format!(
+                "Option<{}>",
+                rust_type(&field.field_type, false, field.is_array)
+            )
+        };
+
+        output.push_str(&format!("    pub {}: {},\n", field.name, rust_type));
+    }
+
+    output.push_str("}\n\n");
+}
+fn generate_model(
+    model: &Model,
+    relations: &[ResolvedRelation],
+    output: &mut String,
+) -> Result<(), GenerateError> {
     let model_struct = format!("{}Model", model.name);
 
     output.push_str("#[derive(Debug, sqlx::FromRow)]\n");
@@ -50,7 +157,12 @@ fn generate_model(model: &Model, relations: &[ResolvedRelation], output: &mut St
     output.push_str("}\n\n");
 
     output.push_str(&format!("pub struct {};\n\n", model.name));
+    validate_model_crud_support(model)?;
+
     generate_create_struct(model, output);
+    generate_insert_data(model, output);
+    generate_update_struct(model, output);
+    generate_update_data(model, output);
 
     output.push_str(&format!("impl Entity for {} {{\n", model.name));
     output.push_str(&format!("    type Model = {model_struct};\n"));
@@ -178,13 +290,17 @@ fn generate_model(model: &Model, relations: &[ResolvedRelation], output: &mut St
 
     generate_relation_key(model, output);
     generate_relations_for_model(model, relations, output);
+    Ok(())
 }
 
 fn generate_create_struct(model: &Model, output: &mut String) {
     output.push_str(&format!("pub struct {}Create {{\n", model.name));
 
     for field in &model.fields {
-        if matches!(field.field_type, FieldType::Model(_)) {
+        if matches!(field.field_type, FieldType::Model(_)) || field.is_array {
+            continue;
+        }
+        if field.is_array {
             continue;
         }
 
@@ -203,6 +319,132 @@ fn generate_create_struct(model: &Model, output: &mut String) {
     }
 
     output.push_str("}\n\n");
+}
+fn generate_insert_data(model: &Model, output: &mut String) {
+    output.push_str(&format!(
+        "impl rustorm::executor::InsertData<{}> for {}Create {{\n",
+        model.name, model.name
+    ));
+
+    output.push_str("    fn columns(&self) -> &'static [&'static str] {\n");
+    output.push_str("        &[");
+
+    let fields = create_data_fields(model);
+
+    for (index, field) in fields.iter().enumerate() {
+        if index > 0 {
+            output.push_str(", ");
+        }
+
+        output.push_str(&format!("\"{}\"", column_name(field)));
+    }
+
+    output.push_str("]\n");
+    output.push_str("    }\n\n");
+
+    output.push_str("    fn values(&self) -> Vec<rustorm::value::BindValue> {\n");
+    output.push_str("        vec![\n");
+
+    for field in &fields {
+        output.push_str("            ");
+        generate_bind_value(field, output);
+        output.push_str(",\n");
+    }
+
+    output.push_str("        ]\n");
+    output.push_str("    }\n");
+    output.push_str("}\n\n");
+}
+
+fn create_data_fields(model: &Model) -> Vec<&crate::ast::Field> {
+    model
+        .fields
+        .iter()
+        .filter(|field| {
+            !matches!(field.field_type, FieldType::Model(_))
+                && !field
+                    .attributes
+                    .iter()
+                    .any(|attribute| matches!(attribute, FieldAttribute::Id))
+        })
+        .collect()
+}
+
+fn generate_bind_value(field: &crate::ast::Field, output: &mut String) {
+    let value = format!("self.{}", field.name);
+
+    if field.nullable {
+        output.push_str(&format!("match &{value} {{\n"));
+
+        output.push_str("                Some(value) => ");
+        generate_non_null_bind_value(field, "value", output);
+        output.push_str(",\n");
+
+        output.push_str("                None => rustorm::value::BindValue::Null,\n");
+        output.push_str("            }");
+    } else {
+        generate_non_null_bind_value(field, &value, output);
+    }
+}
+
+fn generate_non_null_bind_value(field: &crate::ast::Field, value: &str, output: &mut String) {
+    let bind_value = match field.field_type {
+        FieldType::Int => format!("rustorm::value::BindValue::I64(i64::from({value}))"),
+        FieldType::String => {
+            format!("rustorm::value::BindValue::String({value}.clone())")
+        }
+        FieldType::Boolean => {
+            format!("rustorm::value::BindValue::Boolean(*{value})")
+        }
+        FieldType::Float => {
+            format!("rustorm::value::BindValue::F64(*{value})")
+        }
+        FieldType::DateTime => {
+            format!("rustorm::value::BindValue::DateTime({value}.clone())")
+        }
+        FieldType::Decimal => {
+            format!("rustorm::value::BindValue::Decimal({value}.clone())")
+        }
+        FieldType::Json => {
+            format!("rustorm::value::BindValue::Json({value}.clone())")
+        }
+        FieldType::Model(_) => unreachable!("model fields are excluded"),
+    };
+
+    output.push_str(&bind_value);
+}
+
+fn generate_update_non_null_bind_value(
+    field: &crate::ast::Field,
+    value: &str,
+    output: &mut String,
+) {
+    let bind_value = match field.field_type {
+        FieldType::Int => {
+            format!("rustorm::value::BindValue::I64(i64::from(*{value}))")
+        }
+        FieldType::String => {
+            format!("rustorm::value::BindValue::String({value}.clone())")
+        }
+        FieldType::Boolean => {
+            format!("rustorm::value::BindValue::Boolean(*{value})")
+        }
+        FieldType::Float => {
+            format!("rustorm::value::BindValue::F64(*{value})")
+        }
+        FieldType::DateTime => {
+            format!("rustorm::value::BindValue::DateTime({value}.clone())")
+        }
+        FieldType::Decimal => {
+            format!("rustorm::value::BindValue::Decimal({value}.clone())")
+        }
+        FieldType::Json => {
+            format!("rustorm::value::BindValue::Json({value}.clone())")
+        }
+        FieldType::Model(_) => unreachable!("model fields are excluded"),
+    };
+
+    output.push_str(&bind_value);
 }
 
 fn generate_relation_key(model: &Model, output: &mut String) {
@@ -540,14 +782,16 @@ fn to_snake_case(name: &str) -> String {
     result
 }
 
-pub fn write_entities<P: AsRef<Path>>(schema: &Schema, output_path: P) -> std::io::Result<()> {
-    let generated = generate(schema);
+pub fn write_entities<P: AsRef<Path>>(schema: &Schema, output_path: P) -> Result<(), String> {
+    let generated = generate(schema).map_err(|error| format!("generation failed: {error:?}"))?;
 
     if let Some(parent) = output_path.as_ref().parent() {
-        fs::create_dir_all(parent)?;
+        fs::create_dir_all(parent)
+            .map_err(|error| format!("failed to create output directory: {error}"))?;
     }
 
     fs::write(output_path, generated)
+        .map_err(|error| format!("failed to write generated entities: {error}"))
 }
 
 #[cfg(test)]
@@ -582,7 +826,7 @@ mod tests {
             }],
         };
 
-        let generated = generate(&schema);
+        let generated = generate(&schema).unwrap();
 
         assert!(generated.contains("pub struct UserModel"));
         assert!(generated.contains("pub id: i32"));
@@ -654,7 +898,7 @@ mod tests {
             }],
         };
 
-        let generated = generate(&schema);
+        let generated = generate(&schema).unwrap();
 
         assert!(generated.contains("pub id: i32"));
         assert!(generated.contains("pub name: String"));
@@ -711,7 +955,7 @@ mod tests {
             }],
         };
 
-        let generated = generate(&schema);
+        let generated = generate(&schema).unwrap();
 
         assert!(generated.contains("pub name: Option<String>"));
         assert!(generated.contains("pub age: Option<i32>"));
@@ -721,94 +965,22 @@ mod tests {
 
     #[test]
     fn generates_array_rust_types() {
-        let schema = Schema {
-            models: vec![Model {
-                name: "User".to_string(),
-                fields: vec![
-                    Field {
-                        name: "id".to_string(),
-                        field_type: FieldType::Int,
-                        nullable: false,
-                        is_array: false,
-                        attributes: vec![FieldAttribute::Id],
-                    },
-                    Field {
-                        name: "names".to_string(),
-                        field_type: FieldType::String,
-                        nullable: false,
-                        is_array: true,
-                        attributes: vec![],
-                    },
-                    Field {
-                        name: "ages".to_string(),
-                        field_type: FieldType::Int,
-                        nullable: false,
-                        is_array: true,
-                        attributes: vec![],
-                    },
-                    Field {
-                        name: "active".to_string(),
-                        field_type: FieldType::Boolean,
-                        nullable: false,
-                        is_array: true,
-                        attributes: vec![],
-                    },
-                    Field {
-                        name: "scores".to_string(),
-                        field_type: FieldType::Float,
-                        nullable: false,
-                        is_array: true,
-                        attributes: vec![],
-                    },
-                ],
-                attributes: vec![],
-            }],
-        };
+        assert_eq!(rust_type(&FieldType::String, false, true), "Vec<String>");
 
-        let generated = generate(&schema);
+        assert_eq!(rust_type(&FieldType::Int, false, true), "Vec<i32>");
 
-        assert!(generated.contains("pub names: Vec<String>"));
-        assert!(generated.contains("pub ages: Vec<i32>"));
-        assert!(generated.contains("pub active: Vec<bool>"));
-        assert!(generated.contains("pub scores: Vec<f64>"));
+        assert_eq!(rust_type(&FieldType::Boolean, false, true), "Vec<bool>");
+
+        assert_eq!(rust_type(&FieldType::Float, false, true), "Vec<f64>");
     }
-
     #[test]
     fn generates_nullable_array_rust_types() {
-        let schema = Schema {
-            models: vec![Model {
-                name: "User".to_string(),
-                fields: vec![
-                    Field {
-                        name: "id".to_string(),
-                        field_type: FieldType::Int,
-                        nullable: false,
-                        is_array: false,
-                        attributes: vec![FieldAttribute::Id],
-                    },
-                    Field {
-                        name: "names".to_string(),
-                        field_type: FieldType::String,
-                        nullable: true,
-                        is_array: true,
-                        attributes: vec![],
-                    },
-                    Field {
-                        name: "ages".to_string(),
-                        field_type: FieldType::Int,
-                        nullable: true,
-                        is_array: true,
-                        attributes: vec![],
-                    },
-                ],
-                attributes: vec![],
-            }],
-        };
+        assert_eq!(
+            rust_type(&FieldType::String, true, true),
+            "Option<Vec<String>>"
+        );
 
-        let generated = generate(&schema);
-
-        assert!(generated.contains("pub names: Option<Vec<String>>"));
-        assert!(generated.contains("pub ages: Option<Vec<i32>>"));
+        assert_eq!(rust_type(&FieldType::Int, true, true), "Option<Vec<i32>>");
     }
 
     #[test]
@@ -827,7 +999,7 @@ mod tests {
             }],
         };
 
-        let generated = generate(&schema);
+        let generated = generate(&schema).unwrap();
 
         assert!(generated.contains("users_table"));
         assert!(generated.contains("Column::new(\"first_name\")"));
@@ -989,7 +1161,7 @@ mod tests {
             ],
         };
 
-        let generated = generate(&schema);
+        let generated = generate(&schema).unwrap();
 
         // User.posts
         assert!(generated.contains("pub posts: Vec<PostModel>"));
@@ -1038,7 +1210,7 @@ mod tests {
             }],
         };
 
-        let generated = generate(&schema);
+        let generated = generate(&schema).unwrap();
 
         assert!(generated.contains("impl RelationKey for PostModel"));
         assert!(generated.contains("fn relation_key(&self, column: Column) -> Option<i64>"));
@@ -1110,7 +1282,7 @@ mod tests {
             ],
         };
 
-        let generated = generate(&schema);
+        let generated = generate(&schema).unwrap();
 
         assert!(generated.contains("pub profile: Option<Arc<ProfileModel>>"));
         assert!(generated.contains(
@@ -1229,7 +1401,7 @@ Relation::new(Self::id, Profile::userId);"
             ],
         };
 
-        let generated = generate(&schema);
+        let generated = generate(&schema).unwrap();
 
         assert!(generated.contains("pub roles: Vec<Arc<RoleModel>>"));
 
@@ -1282,7 +1454,7 @@ Relation::new(Self::id, Profile::userId);"
             }],
         };
 
-        let generated = generate(&schema);
+        let generated = generate(&schema).unwrap();
 
         assert!(generated.contains("pub struct UserCreate {"));
 
@@ -1300,5 +1472,191 @@ Relation::new(Self::id, Profile::userId);"
         assert!(create_section.contains("pub name: String,"));
         assert!(create_section.contains("pub email: Option<String>,"));
         assert!(!create_section.contains("pub id: i32"));
+    }
+    #[test]
+    fn generates_insert_data() {
+        let schema = Schema {
+            models: vec![Model {
+                name: "User".to_string(),
+                fields: vec![
+                    Field {
+                        name: "id".to_string(),
+                        field_type: FieldType::Int,
+                        nullable: false,
+                        is_array: false,
+                        attributes: vec![FieldAttribute::Id],
+                    },
+                    Field {
+                        name: "name".to_string(),
+                        field_type: FieldType::String,
+                        nullable: false,
+                        is_array: false,
+                        attributes: vec![],
+                    },
+                    Field {
+                        name: "age".to_string(),
+                        field_type: FieldType::Int,
+                        nullable: false,
+                        is_array: false,
+                        attributes: vec![],
+                    },
+                    Field {
+                        name: "email".to_string(),
+                        field_type: FieldType::String,
+                        nullable: true,
+                        is_array: false,
+                        attributes: vec![],
+                    },
+                    Field {
+                        name: "active".to_string(),
+                        field_type: FieldType::Boolean,
+                        nullable: false,
+                        is_array: false,
+                        attributes: vec![],
+                    },
+                    Field {
+                        name: "score".to_string(),
+                        field_type: FieldType::Float,
+                        nullable: false,
+                        is_array: false,
+                        attributes: vec![],
+                    },
+                ],
+                attributes: vec![],
+            }],
+        };
+
+        let generated = generate(&schema).unwrap();
+
+        assert!(generated.contains("impl rustorm::executor::InsertData<User> for UserCreate"));
+
+        assert!(generated.contains("&[\"name\", \"age\", \"email\", \"active\", \"score\"]"));
+
+        assert!(generated.contains("rustorm::value::BindValue::String(self.name.clone())"));
+
+        assert!(generated.contains("rustorm::value::BindValue::I64(i64::from(self.age))"));
+
+        assert!(generated.contains("rustorm::value::BindValue::Null"));
+
+        assert!(generated.contains("rustorm::value::BindValue::Boolean(*self.active)"));
+
+        assert!(generated.contains("rustorm::value::BindValue::F64(*self.score)"));
+
+        let insert_start = generated
+            .find("impl rustorm::executor::InsertData<User> for UserCreate")
+            .expect("InsertData implementation should be generated");
+
+        let insert_end = generated[insert_start..]
+            .find("\n}\n")
+            .map(|offset| insert_start + offset + 3)
+            .expect("InsertData implementation should close");
+
+        let insert_section = &generated[insert_start..insert_end];
+
+        assert!(insert_section.contains("&[\"name\", \"age\", \"email\", \"active\", \"score\"]"));
+
+        assert!(!insert_section.contains("&[\"id\""));
+        println!("{generated}");
+    }
+    #[test]
+    fn rejects_scalar_array_fields_for_crud_generation() {
+        let schema = Schema {
+            models: vec![Model {
+                name: "User".to_string(),
+                fields: vec![
+                    crate::ast::Field {
+                        name: "id".to_string(),
+                        field_type: FieldType::Int,
+                        nullable: false,
+                        is_array: false,
+                        attributes: vec![FieldAttribute::Id],
+                    },
+                    crate::ast::Field {
+                        name: "tags".to_string(),
+                        field_type: FieldType::String,
+                        nullable: false,
+                        is_array: true,
+                        attributes: vec![],
+                    },
+                ],
+                attributes: vec![],
+            }],
+        };
+
+        let result = generate(&schema);
+
+        assert_eq!(
+            result,
+            Err(GenerateError::UnsupportedArrayField {
+                model: "User".to_string(),
+                field: "tags".to_string(),
+            })
+        );
+    }
+    #[test]
+    fn generates_update_data() {
+        let schema = Schema {
+            models: vec![Model {
+                name: "User".to_string(),
+                fields: vec![
+                    Field {
+                        name: "id".to_string(),
+                        field_type: FieldType::Int,
+                        nullable: false,
+                        is_array: false,
+                        attributes: vec![FieldAttribute::Id],
+                    },
+                    Field {
+                        name: "name".to_string(),
+                        field_type: FieldType::String,
+                        nullable: false,
+                        is_array: false,
+                        attributes: vec![],
+                    },
+                    Field {
+                        name: "age".to_string(),
+                        field_type: FieldType::Int,
+                        nullable: false,
+                        is_array: false,
+                        attributes: vec![],
+                    },
+                    Field {
+                        name: "email".to_string(),
+                        field_type: FieldType::String,
+                        nullable: true,
+                        is_array: false,
+                        attributes: vec![],
+                    },
+                    Field {
+                        name: "active".to_string(),
+                        field_type: FieldType::Boolean,
+                        nullable: false,
+                        is_array: false,
+                        attributes: vec![],
+                    },
+                ],
+                attributes: vec![],
+            }],
+        };
+
+        let generated = generate(&schema).unwrap();
+        println!("{generated}");
+        assert!(generated.contains("pub struct UserUpdate {"));
+
+        assert!(generated.contains("pub name: Option<String>,"));
+
+        assert!(generated.contains("pub age: Option<i32>,"));
+
+        assert!(generated.contains("pub email: Option<Option<String>>,"));
+
+        assert!(generated.contains("pub active: Option<bool>,"));
+
+        assert!(generated.contains("impl rustorm::executor::UpdateData<User> for UserUpdate"));
+
+        assert!(generated.contains("if self.name.is_some()"));
+
+        assert!(generated.contains("if self.email.is_some()"));
+
+        assert!(generated.contains("rustorm::value::BindValue::Null"));
     }
 }
