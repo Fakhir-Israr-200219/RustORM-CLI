@@ -39,15 +39,15 @@ RUSTORM CLI
 │   └── Parse referential actions    ✅
 │
 ├── 4. SCHEMA AST
-│   ├── Schema                      ✅
-│   ├── Model                       ✅
-│   ├── Field                       ✅
-│   ├── FieldType                   ✅
-│   ├── FieldAttribute              ✅
-│   ├── DefaultValue                ✅
-│   ├── RelationAttribute           ✅
+│   ├── Schema                       ✅
+│   ├── Model                        ✅
+│   ├── Field                        ✅
+│   ├── FieldType                    ✅
+│   ├── FieldAttribute               ✅
+│   ├── DefaultValue                 ✅
+│   ├── RelationAttribute            ✅
 │   ├── ReferentialAction            ✅
-│   └── ModelAttribute              ✅
+│   └── ModelAttribute               ✅
 │
 ├── 5. VALIDATOR
 │   ├── Duplicate models             ✅
@@ -66,14 +66,23 @@ RUSTORM CLI
 │   ├── Generate Columns             ✅
 │   ├── Generate Field constants     ✅
 │   ├── Generate output file         ✅
-│   ├── Scalar Rust types             ⏳
-│   ├── Nullable Rust types           ⏳
-│   ├── Array Rust types              ⏳
-│   ├── @map support                 ⏳
-│   ├── @@map support                ⏳
-│   ├── Relations generation         ⏳
-│   ├── Create structs               ⏳
-│   └── Update structs               ⏳
+│   ├── Scalar Rust types            ✅
+│   ├── Nullable Rust types          ✅
+│   ├── Array Rust types             ✅
+│   ├── @map support                 ✅
+│   ├── @@map support                ✅
+│   │
+│   ├── Relations
+│   │   ├── One-to-Many              ✅
+│   │   ├── Many-to-One              ✅
+│   │   ├── One-to-One               ✅
+│   │   ├── RelationKey              ✅
+│   │   ├── @map relation keys       ✅
+│   │   └── Many-to-Many             ✅
+│   │
+│   ├── Create structs               ✅
+│   ├── InsertData generation        ⏸️
+│   └── Update structs               ⏸️
 │
 ├── 7. MIGRATION GENERATOR
 │   ├── Read schema                  ⏳
@@ -93,28 +102,111 @@ RUSTORM CLI
 │   ├── rustorm generate             ⏳
 │   ├── rustorm migrate              ⏳
 │   ├── rustorm migrate dev          ⏳
-│   ├── rustorm migrate reset        ⏳
-│   ├── rustorm migrate status       ⏳
+│   ├── rustorm migrate reset       ⏳
+│   ├── rustorm migrate status      ⏳
 │   └── rustorm validate             ⏳
 │
 ├── 9. PROJECT INTEGRATION
-│   ├── Detect rust.schema            ⏳
-│   ├── Detect Cargo project          ⏳
-│   ├── Generated directory           ⏳
-│   ├── Generated module integration  ⏳
-│   ├── Runtime crate integration     ⏳
-│   └── Project configuration         ⏳
+│   ├── Detect rust.schema           ⏳
+│   ├── Detect Cargo project         ⏳
+│   ├── Generated directory          ⏳
+│   ├── Generated module integration ⏳
+│   ├── Runtime crate integration   ⏳
+│   └── Project configuration       ⏳
 │
 └── 10. CLI QUALITY
-    ├── Good error messages           ⏳
-    ├── Source location errors        ⏳
+    ├── Good error messages          ⏳
+    ├── Source location errors       ⏳
     ├── Exit codes                   ⏳
     ├── Help command                 ⏳
     ├── Version command              ⏳
     ├── Integration tests            ⏳
-    └── End-to-end tests             ⏳         
-                    
-                    
+    └── End-to-end tests             ⏳
+
+
+CURRENT CHECKPOINT
+──────────────────
+Entity Generator currently supports:
+
+- Model generation
+- Entity generation
+- Entity implementation
+- Scalar fields
+- Nullable fields
+- Array fields
+- Field constants
+- @map
+- @@map
+- One-to-Many relations
+- Many-to-One relations
+- One-to-One relations
+- Many-to-Many relations
+- RelationKey
+- Create structs
+
+Verified:
+- cargo test → 42 passed, 0 failed
+- cargo clippy --all-targets --all-features -- -D warnings → clean
+
+
+CURRENT PAUSE
+─────────────
+InsertData generation is intentionally paused.
+
+Reason:
+The runtime RustORM BindValue currently supports only:
+
+    String(String)
+    I64(i64)
+
+The CLI schema supports additional scalar types and nullable values,
+so completing InsertData generation now would make the generator depend
+on an incomplete runtime binding layer.
+
+Next work should therefore happen in the RustORM runtime:
+
+    BindValue expansion
+        ↓
+    Executor binding support
+        ↓
+    Runtime tests
+        ↓
+    Return to CLI
+        ↓
+    InsertData generation
+        ↓
+    Update structs
+        ↓
+    UpdateData generation
+
+
+IMPORTANT ARCHITECTURE DECISION
+───────────────────────────────
+RustORM-CLI and the RustORM runtime remain separate projects.
+
+RustORM-CLI is responsible for:
+
+    rust.schema
+        ↓
+    Lexer
+        ↓
+    Parser
+        ↓
+    Schema AST
+        ↓
+    Validator
+        ↓
+    Code generators
+        ↓
+    CLI commands / project integration
+
+The CLI must not reimplement the RustORM runtime.
+
+The generated code should target the existing RustORM runtime API.
+
+
+
+
                     G:\RustORM-CLI
                            │
                     rust.schema

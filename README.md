@@ -8,7 +8,7 @@ The CLI is separate from the RustORM runtime.
 
 ---
 
-## Architecture
+# Architecture
 
 ```text
 rust.schema
@@ -36,7 +36,7 @@ Validator
                        migrations/
 ```
 
-### Runtime Boundary
+## Runtime Boundary
 
 ```text
 RustORM CLI
@@ -142,6 +142,30 @@ NoAction
 
 Status: **Complete**
 
+## Many-to-Many Relation Options
+
+```text
+through
+pivotFrom
+pivotTo
+```
+
+Status: **Complete**
+
+Example:
+
+```text
+model User {
+    id Int @id
+
+    roles Role[] @relation(
+        through: "user_roles",
+        pivotFrom: "user_id",
+        pivotTo: "role_id"
+    )
+}
+```
+
 ## Model Attributes
 
 ```text
@@ -158,17 +182,17 @@ Status: **Complete**
 
 The lexer converts schema source code into tokens.
 
-Status:
+Current status:
 
 ```text
-Identifiers                  ✅
-Strings                     ✅
-Numbers                     ✅
-Symbols                     ✅
-Whitespace handling         ✅
-Comments                    ✅
-Invalid character detection ✅
-Unterminated string errors  ✅
+Identifiers                   ✅
+Strings                      ✅
+Numbers                      ✅
+Symbols                      ✅
+Whitespace handling           ✅
+Comments                      ✅
+Invalid character detection   ✅
+Unterminated string errors    ✅
 ```
 
 ---
@@ -177,21 +201,22 @@ Unterminated string errors  ✅
 
 The parser converts tokens into the Schema AST.
 
-Status:
+Current status:
 
 ```text
-Models                      ✅
-Fields                      ✅
-Scalar types                ✅
-Model references            ✅
-Nullable fields             ✅
-Array fields                ✅
-Field attributes            ✅
-Model attributes            ✅
-Relations                   ✅
-Relation arguments          ✅
-Referential actions         ✅
-Default values              ✅
+Models                       ✅
+Fields                       ✅
+Scalar types                 ✅
+Model references             ✅
+Nullable fields              ✅
+Array fields                 ✅
+Field attributes             ✅
+Model attributes             ✅
+Relations                    ✅
+Relation arguments           ✅
+Referential actions          ✅
+Default values               ✅
+Many-to-many arguments       ✅
 ```
 
 ---
@@ -224,18 +249,33 @@ Current validations:
 
 ```text
 Duplicate models                    ✅
-Duplicate fields                    ✅
-Unknown model references            ✅
-Missing primary key                 ✅
-Multiple primary keys               ✅
+Duplicate fields                   ✅
+Unknown model references           ✅
+Missing primary key                ✅
+Multiple primary keys              ✅
 Unknown relation fields             ✅
 Unknown relation references         ✅
 Relation fields/references mismatch ✅
+Incomplete many-to-many relations   ✅
+Mixed relation metadata             ✅
 ```
 
 Status: **V0.1 complete**
 
 More advanced validation will be added as the schema language grows.
+
+Planned future validation includes:
+
+```text
+Relation field type compatibility   ⏳
+Relation cardinality validation     ⏳
+Relation key type validation        ⏳
+Invalid @default validation         ⏳
+Invalid @unique usage               ⏳
+Invalid @@index fields              ⏳
+Invalid @@unique fields             ⏳
+Invalid referential actions         ⏳
+```
 
 ---
 
@@ -243,24 +283,29 @@ More advanced validation will be added as the schema language grows.
 
 The entity generator converts the validated Schema AST into Rust source code compatible with the RustORM runtime.
 
-Current output:
+## Current Output
 
 ```text
-Model struct              ✅
-Entity struct             ✅
-Entity implementation     ✅
-Column definitions        ✅
-Field constants           ✅
-Output file generation    ✅
+Model struct                  ✅
+Entity struct                 ✅
+Entity implementation         ✅
+Column definitions            ✅
+Field constants               ✅
+Output file generation        ✅
+Scalar Rust types             ✅
+Nullable Rust types           ✅
+Array Rust types              ✅
+@map support                  ✅
+@@map support                 ✅
 ```
 
-Current generated file:
+Generated file:
 
 ```text
 generated/entities.rs
 ```
 
-Example:
+## Example
 
 ```rust
 #[derive(Debug, sqlx::FromRow)]
@@ -282,18 +327,98 @@ impl Entity for User {
 }
 ```
 
-## Entity Generator — Remaining
+## Relations
 
 ```text
-Scalar type generation       ⏳
-Nullable type generation     ⏳
-Array type generation        ⏳
-@map support                 ⏳
-@@map support                ⏳
-Relation generation          ⏳
-Create structs               ⏳
-Update structs               ⏳
+One-to-Many                  ✅
+Many-to-One                  ✅
+One-to-One                   ✅
+RelationKey                  ✅
+@map relation keys            ✅
+Many-to-Many                 ✅
 ```
+
+Many-to-many generation includes:
+
+```text
+Vec<Arc<TargetModel>>
+RelationLoader implementation
+Relation::many_to_many(...)
+Pivot table
+Pivot source column
+Pivot target column
+```
+
+## Create / Update Generation
+
+```text
+Create structs                ✅
+InsertData generation         ⏸️
+Update structs                ⏸️
+UpdateData generation         ⏸️
+```
+
+Create structs currently:
+
+- exclude primary key fields
+- exclude relation fields
+- preserve scalar Rust types
+- preserve nullable types
+- preserve array types
+
+Example:
+
+```rust
+pub struct UserCreate {
+    pub name: String,
+    pub email: Option<String>,
+}
+```
+
+### Why InsertData Is Paused
+
+The generated `InsertData` implementation depends on the runtime `BindValue` system.
+
+Current RustORM runtime:
+
+```rust
+pub enum BindValue {
+    String(String),
+    I64(i64),
+}
+```
+
+The schema language supports additional types:
+
+```text
+Boolean
+Float
+DateTime
+Decimal
+Json
+nullable values
+```
+
+Therefore `InsertData` generation should continue after the runtime binding layer has been expanded.
+
+Current dependency direction:
+
+```text
+RustORM Runtime
+    │
+    ├── Expand BindValue
+    ├── Update executor binding
+    └── Add runtime tests
+            │
+            ▼
+RustORM CLI
+    │
+    ├── InsertData generation
+    ├── Update structs
+    └── UpdateData generation
+```
+
+The CLI must not work around an incomplete runtime binding layer.
 
 ---
 
@@ -304,17 +429,23 @@ The migration generator will convert schema information into database migrations
 ## Planned
 
 ```text
-Read schema                         ⏳
-CREATE TABLE                        ⏳
-Columns                             ⏳
-Primary keys                        ⏳
-Unique constraints                  ⏳
-Indexes                             ⏳
-Foreign keys                        ⏳
-ON DELETE actions                   ⏳
-ALTER TABLE                         ⏳
-Migration files                     ⏳
-Migration history                   ⏳
+Read schema                  ⏳
+Detect new models            ⏳
+CREATE TABLE                 ⏳
+Columns                      ⏳
+Primary keys                 ⏳
+Unique constraints           ⏳
+Indexes                      ⏳
+Foreign keys                 ⏳
+ON DELETE actions            ⏳
+ALTER TABLE                  ⏳
+Add columns                  ⏳
+Drop columns                 ⏳
+Rename columns               ⏳
+Add/remove indexes           ⏳
+Join tables                  ⏳
+Migration files              ⏳
+Migration history            ⏳
 ```
 
 ---
@@ -341,6 +472,22 @@ The current executable temporarily accepts the schema path as an argument and de
 rust.schema
 ```
 
+Current execution pipeline:
+
+```text
+Read schema
+    ↓
+Lexer
+    ↓
+Parser
+    ↓
+Validator
+    ↓
+Entity Generator
+    ↓
+generated/entities.rs
+```
+
 ---
 
 # 9. Project Integration
@@ -359,13 +506,13 @@ myproject/
 
 Target workflow:
 
-```text
+```bash
 rustorm generate
 ```
 
 generates Rust entities.
 
-```text
+```bash
 rustorm migrate dev
 ```
 
@@ -381,6 +528,17 @@ let users = User::find()
     .await?;
 ```
 
+Planned integration:
+
+```text
+Detect rust.schema              ⏳
+Detect Cargo project            ⏳
+Generated directory             ⏳
+Generated module integration    ⏳
+Runtime crate integration       ⏳
+Project configuration           ⏳
+```
+
 ---
 
 # 10. Testing
@@ -388,38 +546,50 @@ let users = User::find()
 Current test status:
 
 ```text
-Lexer tests                 ✅
-Parser tests                ✅
-AST tests                   ✅
-Validator tests             ✅
-Generator tests             ✅
+Lexer tests                    ✅
+Parser tests                   ✅
+AST tests                      ✅
+Validator tests                ✅
+Generator tests                ✅
+```
 
-Current total: 27 tests
+Current total:
+
+```text
+42 tests
 ```
 
 Current verification:
 
-```text
+```bash
 cargo test
 ```
 
-Expected:
+Result:
 
 ```text
-27 passed
+42 passed
+0 failed
 ```
 
 Clippy verification:
 
-```text
+```bash
 cargo clippy --all-targets --all-features -- -D warnings
 ```
 
-Current status:
+Result:
 
 ```text
 0 warnings
 0 errors
+```
+
+The current CLI checkpoint is therefore:
+
+```text
+42 tests passing
+Clippy clean
 ```
 
 ---
@@ -450,6 +620,8 @@ The implementation order is intentionally:
 10. End-to-End Testing
 ```
 
+Within the Entity Generator, runtime-dependent CRUD generation is developed only after the runtime APIs required by generated code are ready.
+
 Do not implement later stages prematurely.
 
 ---
@@ -458,36 +630,66 @@ Do not implement later stages prematurely.
 
 Current milestone:
 
-**V0.1 — Schema → Validated AST → Basic Entity Generation**
+**V0.1 — Schema → Validated AST → Entity Generation**
 
 Completed:
 
 ```text
-Schema parsing             ✅
-AST                         ✅
-Validation                  ✅
-Basic entity generation     ✅
-Generated file output       ✅
-27 tests                    ✅
-Clippy clean                ✅
+Schema parsing                 ✅
+AST                            ✅
+Validation                     ✅
+Model generation               ✅
+Entity generation              ✅
+Field generation               ✅
+Relation generation            ✅
+Many-to-many generation        ✅
+RelationKey generation         ✅
+Create struct generation       ✅
+Generated file output           ✅
+42 tests                       ✅
+Clippy clean                   ✅
 ```
 
-Next milestone:
+Current paused work:
 
 ```text
-Complete Entity Generator
+InsertData generation          ⏸️
+Update struct generation       ⏸️
+UpdateData generation          ⏸️
 ```
 
-After that:
+Reason:
+
+The RustORM runtime's `BindValue` and executor binding layer currently support only a subset of the schema language's scalar/nullable values.
+
+## Next Runtime Milestone
+
+Before continuing CRUD code generation in the CLI:
+
+```text
+1. Expand BindValue
+        ↓
+2. Update executor binding
+        ↓
+3. Add runtime tests
+        ↓
+4. Return to CLI InsertData generation
+        ↓
+5. Generate Update structs
+        ↓
+6. Generate UpdateData
+```
+
+After Entity Generator completion:
 
 ```text
 Migration Generator
-```
-
-Then:
-
-```text
-CLI commands + project integration
+        ↓
+CLI Commands
+        ↓
+Project Integration
+        ↓
+End-to-End Testing
 ```
 
 ---
@@ -498,17 +700,22 @@ The RustORM CLI should remain a **toolchain**, not a second ORM runtime.
 
 ```text
 CLI
- ├── Understand schema
- ├── Validate schema
- ├── Generate code
- └── Generate migrations
+├── Understand schema
+├── Parse schema
+├── Validate schema
+├── Generate Rust code
+└── Generate migrations
 
 Runtime
- ├── Connect to database
- ├── Build queries
- ├── Execute queries
- ├── Manage entities
- └── Manage runtime ORM behavior
+├── Connect to database
+├── Build queries
+├── Execute queries
+├── Manage entities
+└── Manage runtime ORM behavior
 ```
+
+The CLI generates code for the existing RustORM runtime.
+
+The CLI should not duplicate runtime functionality.
 
 This separation should be maintained as the project grows.

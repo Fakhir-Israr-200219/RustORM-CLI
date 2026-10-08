@@ -36,6 +36,14 @@ pub enum ValidationError {
     MultiplePrimaryKeys {
         model: String,
     },
+    IncompleteManyToManyRelation {
+        model: String,
+        field: String,
+    },
+    MixedRelationMetadata {
+        model: String,
+        field: String,
+    },
 }
 
 pub fn validate(schema: &Schema) -> Result<(), ValidationError> {
@@ -100,6 +108,7 @@ pub fn validate(schema: &Schema) -> Result<(), ValidationError> {
     }
 
     // 3. Validate relation fields and references
+    // 3. Validate relation fields and references
     for model in &schema.models {
         for field in &model.fields {
             for attribute in &field.attributes {
@@ -107,6 +116,38 @@ pub fn validate(schema: &Schema) -> Result<(), ValidationError> {
                     continue;
                 };
 
+                let has_pivot_metadata = relation.through.is_some()
+                    || relation.pivot_from.is_some()
+                    || relation.pivot_to.is_some();
+
+                let has_normal_metadata =
+                    !relation.fields.is_empty() || !relation.references.is_empty();
+
+                // Many-to-Many relation
+                if has_pivot_metadata {
+                    // A Many-to-Many relation must have all pivot
+                    // metadata and must not mix it with normal FK metadata.
+                    if relation.through.is_none()
+                        || relation.pivot_from.is_none()
+                        || relation.pivot_to.is_none()
+                    {
+                        return Err(ValidationError::IncompleteManyToManyRelation {
+                            model: model.name.clone(),
+                            field: field.name.clone(),
+                        });
+                    }
+
+                    if has_normal_metadata {
+                        return Err(ValidationError::MixedRelationMetadata {
+                            model: model.name.clone(),
+                            field: field.name.clone(),
+                        });
+                    }
+
+                    continue;
+                }
+
+                // Normal relation
                 if relation.fields.len() != relation.references.len() {
                     return Err(ValidationError::RelationFieldReferenceLengthMismatch {
                         model: model.name.clone(),
@@ -159,10 +200,7 @@ pub fn validate(schema: &Schema) -> Result<(), ValidationError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ast::{
-        Field, FieldAttribute, FieldType, Model, RelationAttribute,
-        Schema,
-    };
+    use crate::ast::{Field, FieldAttribute, FieldType, Model, RelationAttribute, Schema};
 
     #[test]
     fn rejects_duplicate_models() {
@@ -372,6 +410,9 @@ mod tests {
                                 name: None,
                                 fields: vec!["authorId".to_string()],
                                 references: vec!["id".to_string()],
+                                through: None,
+                                pivot_from: None,
+                                pivot_to: None,
                                 on_delete: None,
                             })],
                         },
@@ -431,6 +472,9 @@ mod tests {
                                 name: None,
                                 fields: vec!["authorId".to_string()],
                                 references: vec!["missingId".to_string()],
+                                through: None,
+                                pivot_from: None,
+                                pivot_to: None,
                                 on_delete: None,
                             })],
                         },
@@ -500,6 +544,9 @@ mod tests {
                                 name: None,
                                 fields: vec!["authorId".to_string()],
                                 references: vec!["id".to_string(), "tenantId".to_string()],
+                                through: None,
+                                pivot_from: None,
+                                pivot_to: None,
                                 on_delete: None,
                             })],
                         },
@@ -571,6 +618,168 @@ mod tests {
             validate(&schema),
             Err(ValidationError::MultiplePrimaryKeys {
                 model: "User".to_string(),
+            })
+        );
+    }
+    #[test]
+    fn accepts_many_to_many_relation() {
+        let schema = Schema {
+            models: vec![
+                crate::ast::Model {
+                    name: "User".to_string(),
+                    fields: vec![
+                        crate::ast::Field {
+                            name: "id".to_string(),
+                            field_type: crate::ast::FieldType::Int,
+                            nullable: false,
+                            is_array: false,
+                            attributes: vec![crate::ast::FieldAttribute::Id],
+                        },
+                        crate::ast::Field {
+                            name: "roles".to_string(),
+                            field_type: crate::ast::FieldType::Model("Role".to_string()),
+                            nullable: false,
+                            is_array: true,
+                            attributes: vec![crate::ast::FieldAttribute::Relation(
+                                crate::ast::RelationAttribute {
+                                    name: Some("UserRoles".to_string()),
+                                    fields: vec![],
+                                    references: vec![],
+                                    through: Some("user_roles".to_string()),
+                                    pivot_from: Some("user_id".to_string()),
+                                    pivot_to: Some("role_id".to_string()),
+                                    on_delete: None,
+                                },
+                            )],
+                        },
+                    ],
+                    attributes: vec![],
+                },
+                crate::ast::Model {
+                    name: "Role".to_string(),
+                    fields: vec![crate::ast::Field {
+                        name: "id".to_string(),
+                        field_type: crate::ast::FieldType::Int,
+                        nullable: false,
+                        is_array: false,
+                        attributes: vec![crate::ast::FieldAttribute::Id],
+                    }],
+                    attributes: vec![],
+                },
+            ],
+        };
+
+        assert!(validate(&schema).is_ok());
+    }
+    #[test]
+    fn rejects_incomplete_many_to_many_relation() {
+        let schema = Schema {
+            models: vec![
+                crate::ast::Model {
+                    name: "User".to_string(),
+                    fields: vec![
+                        crate::ast::Field {
+                            name: "id".to_string(),
+                            field_type: crate::ast::FieldType::Int,
+                            nullable: false,
+                            is_array: false,
+                            attributes: vec![crate::ast::FieldAttribute::Id],
+                        },
+                        crate::ast::Field {
+                            name: "roles".to_string(),
+                            field_type: crate::ast::FieldType::Model("Role".to_string()),
+                            nullable: false,
+                            is_array: true,
+                            attributes: vec![crate::ast::FieldAttribute::Relation(
+                                crate::ast::RelationAttribute {
+                                    name: Some("UserRoles".to_string()),
+                                    fields: vec![],
+                                    references: vec![],
+                                    through: Some("user_roles".to_string()),
+                                    pivot_from: Some("user_id".to_string()),
+                                    pivot_to: None,
+                                    on_delete: None,
+                                },
+                            )],
+                        },
+                    ],
+                    attributes: vec![],
+                },
+                crate::ast::Model {
+                    name: "Role".to_string(),
+                    fields: vec![crate::ast::Field {
+                        name: "id".to_string(),
+                        field_type: crate::ast::FieldType::Int,
+                        nullable: false,
+                        is_array: false,
+                        attributes: vec![crate::ast::FieldAttribute::Id],
+                    }],
+                    attributes: vec![],
+                },
+            ],
+        };
+
+        assert_eq!(
+            validate(&schema),
+            Err(ValidationError::IncompleteManyToManyRelation {
+                model: "User".to_string(),
+                field: "roles".to_string(),
+            })
+        );
+    }
+    #[test]
+    fn rejects_mixed_relation_metadata() {
+        let schema = Schema {
+            models: vec![
+                crate::ast::Model {
+                    name: "User".to_string(),
+                    fields: vec![
+                        crate::ast::Field {
+                            name: "id".to_string(),
+                            field_type: crate::ast::FieldType::Int,
+                            nullable: false,
+                            is_array: false,
+                            attributes: vec![crate::ast::FieldAttribute::Id],
+                        },
+                        crate::ast::Field {
+                            name: "roles".to_string(),
+                            field_type: crate::ast::FieldType::Model("Role".to_string()),
+                            nullable: false,
+                            is_array: true,
+                            attributes: vec![crate::ast::FieldAttribute::Relation(
+                                crate::ast::RelationAttribute {
+                                    name: Some("UserRoles".to_string()),
+                                    fields: vec!["id".to_string()],
+                                    references: vec!["id".to_string()],
+                                    through: Some("user_roles".to_string()),
+                                    pivot_from: Some("user_id".to_string()),
+                                    pivot_to: Some("role_id".to_string()),
+                                    on_delete: None,
+                                },
+                            )],
+                        },
+                    ],
+                    attributes: vec![],
+                },
+                crate::ast::Model {
+                    name: "Role".to_string(),
+                    fields: vec![crate::ast::Field {
+                        name: "id".to_string(),
+                        field_type: crate::ast::FieldType::Int,
+                        nullable: false,
+                        is_array: false,
+                        attributes: vec![crate::ast::FieldAttribute::Id],
+                    }],
+                    attributes: vec![],
+                },
+            ],
+        };
+
+        assert_eq!(
+            validate(&schema),
+            Err(ValidationError::MixedRelationMetadata {
+                model: "User".to_string(),
+                field: "roles".to_string(),
             })
         );
     }

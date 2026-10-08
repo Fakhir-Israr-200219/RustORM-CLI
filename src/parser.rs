@@ -1,6 +1,6 @@
 use crate::ast::{
-    Field, FieldAttribute, FieldType, Model, ModelAttribute, ReferentialAction,
-    RelationAttribute, Schema,
+    Field, FieldAttribute, FieldType, Model, ModelAttribute, ReferentialAction, RelationAttribute,
+    Schema,
 };
 use crate::lexer::Token;
 
@@ -34,6 +34,9 @@ impl Parser {
         let mut fields = Vec::new();
         let mut references = Vec::new();
         let mut on_delete = None;
+        let mut through = None;
+        let mut pivot_from = None;
+        let mut pivot_to = None;
 
         while !self.check(&Token::RightParen) {
             let key = self.expect_identifier_value()?;
@@ -70,6 +73,30 @@ impl Parser {
                         }
                     });
                 }
+                "through" => {
+                    through = Some(match self.advance() {
+                        Some(Token::String(value)) => value,
+                        Some(Token::Identifier(value)) => value,
+                        Some(token) => return Err(ParserError::UnexpectedToken(token)),
+                        None => return Err(ParserError::UnexpectedEnd),
+                    });
+                }
+                "pivotFrom" => {
+                    pivot_from = Some(match self.advance() {
+                        Some(Token::String(value)) => value,
+                        Some(Token::Identifier(value)) => value,
+                        Some(token) => return Err(ParserError::UnexpectedToken(token)),
+                        None => return Err(ParserError::UnexpectedEnd),
+                    });
+                }
+                "pivotTo" => {
+                    pivot_to = Some(match self.advance() {
+                        Some(Token::String(value)) => value,
+                        Some(Token::Identifier(value)) => value,
+                        Some(token) => return Err(ParserError::UnexpectedToken(token)),
+                        None => return Err(ParserError::UnexpectedEnd),
+                    });
+                }
 
                 _ => {
                     return Err(ParserError::UnexpectedToken(Token::Identifier(key)));
@@ -87,6 +114,9 @@ impl Parser {
             name,
             fields,
             references,
+            through,
+            pivot_from,
+            pivot_to,
             on_delete,
         })
     }
@@ -621,6 +651,9 @@ mod tests {
                 name: None,
                 fields: vec!["authorId".to_string()],
                 references: vec!["id".to_string()],
+                through: None,
+                pivot_from: None,
+                pivot_to: None,
                 on_delete: None,
             })]
         );
@@ -652,6 +685,9 @@ mod tests {
                 name: Some("PostAuthor".to_string()),
                 fields: vec!["authorId".to_string()],
                 references: vec!["id".to_string()],
+                through: None,
+                pivot_from: None,
+                pivot_to: None,
                 on_delete: Some(ReferentialAction::Cascade),
             })]
         );
@@ -692,9 +728,50 @@ mod tests {
                     name: None,
                     fields: vec!["authorId".to_string()],
                     references: vec!["id".to_string()],
+                    through: None,
+                    pivot_from: None,
+                    pivot_to: None,
                     on_delete: Some(expected),
                 })]
             );
         }
+    }
+    #[test]
+    fn parses_many_to_many_relation() {
+        let source = r#"
+        model User {
+            id Int @id
+            roles Role[] @relation(
+                name: "UserRoles",
+                through: "user_roles",
+                pivotFrom: "user_id",
+                pivotTo: "role_id"
+            )
+        }
+
+        model Role {
+            id Int @id
+            users User[]
+        }
+    "#;
+
+        let tokens = crate::lexer::tokenize(source).unwrap();
+        let schema = Parser::new(tokens).parse().unwrap();
+
+        let user = &schema.models[0];
+        let roles = &user.fields[1];
+
+        assert_eq!(
+            roles.attributes,
+            vec![FieldAttribute::Relation(RelationAttribute {
+                name: Some("UserRoles".to_string()),
+                fields: vec![],
+                references: vec![],
+                through: Some("user_roles".to_string()),
+                pivot_from: Some("user_id".to_string()),
+                pivot_to: Some("role_id".to_string()),
+                on_delete: None,
+            })]
+        );
     }
 }

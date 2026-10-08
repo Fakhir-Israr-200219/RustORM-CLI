@@ -59,6 +59,9 @@ pub struct RelationAttribute {
     pub name: Option<String>,
     pub fields: Vec<String>,
     pub references: Vec<String>,
+    pub through: Option<String>,
+    pub pivot_from: Option<String>,
+    pub pivot_to: Option<String>,
     pub on_delete: Option<ReferentialAction>,
 }
 
