@@ -475,9 +475,7 @@ mod tests {
             models: vec![
                 Model {
                     name: "User".to_string(),
-                    fields: vec![
-                        field("id", FieldType::Int, false, vec![FieldAttribute::Id]),
-                    ],
+                    fields: vec![field("id", FieldType::Int, false, vec![FieldAttribute::Id])],
                     attributes: vec![],
                 },
                 Model {
@@ -494,13 +492,15 @@ mod tests {
                             "user",
                             FieldType::Model("User".to_string()),
                             false,
-                            vec![FieldAttribute::Relation(
-                                crate::ast::RelationAttribute {
-                                    fields: vec!["userId".to_string()],
-                                    references: vec!["id".to_string()],
-                                    on_delete: None,
-                                },
-                            )],
+                            vec![FieldAttribute::Relation(crate::ast::RelationAttribute {
+                                fields: vec!["userId".to_string()],
+                                references: vec!["id".to_string()],
+                                on_delete: None,
+                                through: None,
+                                pivot_from: None,
+                                pivot_to: None,
+                                name: None,
+                            })],
                         ),
                     ],
                     attributes: vec![],
@@ -510,9 +510,7 @@ mod tests {
 
         let sql = generate_migration(&schema).unwrap();
 
-        assert!(sql.contains(
-            r#"FOREIGN KEY ("user_id") REFERENCES "user" ("id")"#
-        ));
+        assert!(sql.contains(r#"FOREIGN KEY ("user_id") REFERENCES "user" ("id")"#));
     }
 
     #[test]
@@ -537,19 +535,15 @@ mod tests {
                             "parent",
                             FieldType::Model("Parent".to_string()),
                             false,
-                            vec![FieldAttribute::Relation(
-                                crate::ast::RelationAttribute {
-                                    fields: vec![
-                                        "tenantId".to_string(),
-                                        "parentId".to_string(),
-                                    ],
-                                    references: vec![
-                                        "tenantId".to_string(),
-                                        "id".to_string(),
-                                    ],
-                                    on_delete: None,
-                                },
-                            )],
+                            vec![FieldAttribute::Relation(crate::ast::RelationAttribute {
+                                fields: vec!["tenantId".to_string(), "parentId".to_string()],
+                                references: vec!["tenantId".to_string(), "id".to_string()],
+                                on_delete: None,
+                                through: None,
+                                pivot_from: None,
+                                pivot_to: None,
+                                name: None,
+                            })],
                         ),
                     ],
                     attributes: vec![],
@@ -565,6 +559,4 @@ mod tests {
 
         assert_eq!(sql.matches("FOREIGN KEY").count(), 1);
     }
-
-
 }
