@@ -1,152 +1,257 @@
-RUSTORM CLI
-│
-├── 1. SCHEMA LANGUAGE
-│   ├── Model syntax                 ✅
-│   ├── Scalar types                 ✅
-│   ├── Nullable fields              ✅
-│   ├── Array fields                 ✅
-│   ├── Model references             ✅
-│   ├── @id                          ✅
-│   ├── @unique                      ✅
-│   ├── @default                     ✅
-│   ├── @map                         ✅
-│   ├── @updatedAt                   ✅
-│   ├── @relation                     ✅
-│   ├── onDelete                     ✅
-│   ├── @@map                        ✅
-│   ├── @@index                      ✅
-│   └── @@unique                     ✅
-│
-├── 2. LEXER
-│   ├── Identifiers                  ✅
-│   ├── Strings                      ✅
-│   ├── Numbers                      ✅
-│   ├── Symbols                      ✅
-│   ├── Comments                     ✅
-│   ├── Invalid character detection  ✅
-│   └── Unterminated string detection✅
-│
-├── 3. PARSER
-│   ├── Parse models                 ✅
-│   ├── Parse fields                 ✅
-│   ├── Parse types                  ✅
-│   ├── Parse nullable               ✅
-│   ├── Parse arrays                 ✅
-│   ├── Parse field attributes       ✅
-│   ├── Parse model attributes       ✅
-│   ├── Parse relations              ✅
-│   ├── Parse relation arguments     ✅
-│   └── Parse referential actions    ✅
-│
-├── 4. SCHEMA AST
-│   ├── Schema                       ✅
-│   ├── Model                        ✅
-│   ├── Field                        ✅
-│   ├── FieldType                    ✅
-│   ├── FieldAttribute               ✅
-│   ├── DefaultValue                 ✅
-│   ├── RelationAttribute            ✅
-│   ├── ReferentialAction            ✅
-│   └── ModelAttribute               ✅
-│
-├── 5. VALIDATOR
-│   ├── Duplicate models             ✅
-│   ├── Duplicate fields             ✅
-│   ├── Unknown model references     ✅
-│   ├── Missing primary key          ✅
-│   ├── Multiple primary keys        ✅
-│   ├── Unknown relation fields      ✅
-│   ├── Unknown relation references  ✅
-│   └── Relation length validation   ✅
-│
-├── 6. ENTITY GENERATOR
-│   ├── Generate Model struct        ✅
-│   ├── Generate Entity struct       ✅
-│   ├── Generate Entity impl         ✅
-│   ├── Generate Columns             ✅
-│   ├── Generate Field constants     ✅
-│   ├── Generate output file         ✅
-│   ├── Scalar Rust types            ✅
-│   ├── Nullable Rust types          ✅
-│   ├── Array Rust types             ✅
-│   ├── @map support                 ✅
-│   ├── @@map support                ✅
-│   │
-│   ├── Relations
-│   │   ├── One-to-Many              ✅
-│   │   ├── Many-to-One              ✅
-│   │   ├── One-to-One               ✅
-│   │   ├── RelationKey              ✅
-│   │   ├── @map relation keys       ✅
-│   │   └── Many-to-Many             ✅
-│   │
-│   ├── Create structs               ✅
-│   ├── InsertData generation        ⏸️
-│   └── Update structs               ⏸️
-│
-├── 7. MIGRATION GENERATOR
-│   ├── Read schema                  ⏳
-│   ├── Detect new models            ⏳
-│   ├── Generate CREATE TABLE        ⏳
-│   ├── Generate columns             ⏳
-│   ├── Generate primary keys        ⏳
-│   ├── Generate unique constraints  ⏳
-│   ├── Generate indexes             ⏳
-│   ├── Generate foreign keys        ⏳
-│   ├── Generate ON DELETE           ⏳
-│   ├── Generate ALTER TABLE         ⏳
-│   ├── Migration files              ⏳
-│   └── Migration history            ⏳
-│
-├── 8. CLI COMMANDS
-│   ├── rustorm generate             ⏳
-│   ├── rustorm migrate              ⏳
-│   ├── rustorm migrate dev          ⏳
-│   ├── rustorm migrate reset       ⏳
-│   ├── rustorm migrate status      ⏳
-│   └── rustorm validate             ⏳
-│
-├── 9. PROJECT INTEGRATION
-│   ├── Detect rust.schema           ⏳
-│   ├── Detect Cargo project         ⏳
-│   ├── Generated directory          ⏳
-│   ├── Generated module integration ⏳
-│   ├── Runtime crate integration   ⏳
-│   └── Project configuration       ⏳
-│
-└── 10. CLI QUALITY
-    ├── Good error messages          ⏳
-    ├── Source location errors       ⏳
-    ├── Exit codes                   ⏳
-    ├── Help command                 ⏳
-    ├── Version command              ⏳
-    ├── Integration tests            ⏳
-    └── End-to-end tests             ⏳
+# RUSTORM CLI — MASTER CHECKLIST
+
+Legend: ✅ Done / Verified | 🟡 Implemented / Verification Pending | ⏳ Pending | 🔴 Current Blocker
+
+## 1. SCHEMA LANGUAGE
+- [x] Model syntax
+- [x] Scalar types
+- [x] Nullable fields
+- [x] Array fields
+- [x] Model references
+- [x] `@id`
+- [x] `@unique`
+- [x] `@default`
+- [x] `@map`
+- [x] `@updatedAt`
+- [x] `@relation`
+- [x] `onDelete`
+- [x] `@@map`
+- [x] `@@index`
+- [x] `@@unique`
+
+## 2. LEXER
+- [x] Identifiers
+- [x] Strings
+- [x] Numbers
+- [x] Symbols
+- [x] Comments
+- [x] Invalid character detection
+- [x] Unterminated string detection
+
+## 3. PARSER
+- [x] Parse models
+- [x] Parse fields
+- [x] Parse types
+- [x] Parse nullable fields
+- [x] Parse arrays
+- [x] Parse field attributes
+- [x] Parse model attributes
+- [x] Parse relations
+- [x] Parse relation arguments
+- [x] Parse referential actions
+
+## 4. SCHEMA AST
+- [x] Schema
+- [x] Model
+- [x] Field
+- [x] FieldType
+- [x] FieldAttribute
+- [x] DefaultValue
+- [x] RelationAttribute
+- [x] ReferentialAction
+- [x] ModelAttribute
+
+## 5. VALIDATOR
+- [x] Duplicate models
+- [x] Duplicate fields
+- [x] Unknown model references
+- [x] Missing primary key
+- [x] Multiple primary keys
+- [x] Unknown relation fields
+- [x] Unknown relation references
+- [x] Relation field/reference length validation
+- [x] Reject `@relation` on non-model fields
+- [x] Validate completeness of many-to-many metadata
+- [x] Reject conflicting relation metadata
+- [ ] Validate relation cardinality and consistency edge cases
+- [ ] Improve validation error messages and source locations
+
+## 6. ENTITY GENERATOR
+
+### Model and Entity
+- [x] Generate Model struct
+- [x] Generate Entity struct
+- [x] Generate Entity implementation
+- [x] Generate Columns
+- [x] Generate Field constants
+- [x] Generate output file
+- [x] Generate scalar Rust types
+- [x] Generate nullable Rust types
+- [x] Generate array Rust types
+- [x] `@map` support
+- [x] `@@map` support
+
+### Relations
+- [x] One-to-Many
+- [x] Many-to-One
+- [x] One-to-One
+- [x] RelationKey
+- [x] `@map` relation keys
+- [x] Many-to-Many
+- [x] Compile-test generated relation entities
+- [ ] Verify relation edge cases and generated naming
+
+### Create / Insert / Update
+- [x] Create structs — implementation present
+- [🟡] InsertData generation — implementation and unit test pass; runtime compatibility needs verification
+- [🟡] Update structs — implementation present; primary-key behavior needs verification
+- [🟡] UpdateData generation — implementation and unit test pass; field mapping/runtime compatibility needs verification
+- [ ] Verify required versus optional fields
+- [ ] Verify default-valued fields
+- [ ] Verify nullable fields
+- [ ] Verify primary-key exclusion/inclusion rules
+- [ ] Verify `@updatedAt` behavior
+- [ ] Complete focused Create/Insert/Update tests
+- [🟡] Compile-test generated Create/Insert/Update code — basic compile test exists; comprehensive compatibility pending
+
+## 7. MIGRATION GENERATOR
+
+### Schema-to-SQL
+- [🟡] Read schema and validate it before migration generation — CLI path implemented; edge cases pending
+- [🟡] Generate initial tables for schema models — existing-schema diff pending
+- [🟡] Generate `CREATE TABLE` — basic generation and unit test pass; PostgreSQL correctness pending
+- [🟡] Generate columns and SQL types — basic implementation and tests present
+- [🟡] Generate nullable / `NOT NULL` constraints — broader verification pending
+- [🟡] Generate primary keys — basic implementation and test pass
+- [🟡] Generate unique constraints — implementation needs verification
+- [🟡] Generate indexes — initial test passes; edge cases pending
+- [🟡] Generate foreign keys — implementation exists; behavior needs verification
+- [🟡] Generate `ON DELETE` actions — implementation needs verification
+- [🟡] Generate default values — basic handling and string escaping tested
+- [ ] Generate `@updatedAt` behavior where supported
+- [🟡] Generate `@@map` table names and `@map` column names — basic test passes
+- [🟡] Quote PostgreSQL identifiers — quoted names observed in generated SQL; reserved words and edge cases need verification
+- [ ] Verify generated SQL against an actual PostgreSQL database
+- [ ] Add comprehensive migration-generator tests
+- [ ] Verify single foreign-key generation
+- [ ] Verify composite foreign-key generation
+- [ ] Verify mapped identifiers in foreign-key constraints
+- [ ] Verify referential actions in generated constraints
+- [ ] Validate referenced columns have suitable primary/unique constraints
+- [ ] Verify invalid relation metadata produces useful errors
+- [ ] Generate many-to-many pivot tables
+
+### Schema Changes and History
+- [ ] Detect added columns
+- [ ] Detect changed columns
+- [ ] Detect removed columns and define safe behavior
+- [ ] Generate `ALTER TABLE` statements
+- [ ] Handle constraint and index changes
+- [ ] Create timestamped migration files
+- [ ] Maintain migration history
+- [ ] Track applied migrations
+- [ ] Execute migrations against the database
+- [ ] Handle migration failures and transactions
+- [ ] Prevent accidental destructive migrations without confirmation
+
+## 8. CLI COMMANDS
+- [🟡] `rustorm generate` — basic command tested through Cargo; standalone binary naming pending
+- [🟡] `rustorm validate` — basic command tested through Cargo
+- [🟡] `rustorm migrate` — initial SQL file generation manually verified; database execution pending
+- [ ] `rustorm migrate dev`
+- [ ] `rustorm migrate reset`
+- [ ] `rustorm migrate status`
+- [🟡] Define command arguments and options — basic commands/default paths implemented; full argument validation pending
+- [ ] Handle unknown commands and invalid arguments comprehensively
+- [🟡] Return appropriate process exit codes — top-level error handling exists; integration tests pending
+- [x] Help command — `--help` manually verified
+- [x] Version command — `--version` manually verified
+
+## 9. PROJECT INTEGRATION
+- [ ] Detect `rust.schema` or configured schema path automatically
+- [ ] Detect Cargo project root
+- [🟡] Configure generated output paths — default paths work; configuration pending
+- [ ] Integrate generated module into project
+- [ ] Integrate RustORM runtime crate
+- [ ] Add project configuration file
+- [🟡] Support custom schema and migration output paths — basic support needs verification
+- [ ] Handle missing or invalid project configuration
+- [ ] Avoid overwriting user files unexpectedly
+
+## 10. CLI QUALITY
+- [🟡] Clear, actionable error messages — basic errors implemented; refinement pending
+- [ ] Source line/column information for lexer/parser/validator errors
+- [🟡] Correct process exit codes — implementation present; integration tests pending
+- [x] Help command manually verified
+- [x] Version command manually verified
+- [x] Unit tests for lexer/parser/validator/generator existed at last passing baseline
+- [x] Existing generated-entity compile test
+- [x] Existing generated-relation compile test
+- [ ] CLI command integration tests
+- [ ] End-to-end tests from schema to generated code
+- [ ] End-to-end tests for migrations
+- [ ] Run `cargo fmt --check`
+- [🟡] Clippy with warnings denied — passed before the latest test edits; rerun after fixing blocker
+- [🔴] Restore compiling test suite — latest FK test additions fail because required `RelationAttribute` fields are missing
+- [🟡] Previous verified test baseline — 50 tests passed before the latest FK test additions; rerun after fixing blocker
+
+## 11. RELEASE READINESS
+- [ ] Document schema syntax and supported attributes
+- [ ] Document CLI commands and examples
+- [ ] Add a sample project
+- [ ] Verify clean build from a fresh checkout
+- [ ] Verify generated code compiles in the sample project
+- [ ] Verify migration workflow against a test database
+- [ ] Define versioning and compatibility expectations
+- [ ] Prepare initial release
+
+## 12. NEXT SESSION — FIRST TASKS
+- [ ] Inspect `RelationAttribute` definition in `src/ast.rs`
+- [ ] Identify all required fields in `RelationAttribute`
+- [ ] Fix both foreign-key test initializers in `src/migration.rs`
+- [ ] Run `cargo fmt`
+- [ ] Run `cargo test`
+- [ ] Run `cargo clippy --all-targets --all-features -- -D warnings`
+- [ ] Verify single and composite foreign-key SQL
+- [ ] Continue with `onDelete`, mapped-name, and invalid-reference tests
 
 
-CURRENT CHECKPOINT
-──────────────────
-Entity Generator currently supports:
 
-- Model generation
-- Entity generation
-- Entity implementation
-- Scalar fields
-- Nullable fields
-- Array fields
-- Field constants
-- @map
-- @@map
-- One-to-Many relations
-- Many-to-One relations
-- One-to-One relations
-- Many-to-Many relations
-- RelationKey
-- Create structs
 
-Verified:
-- cargo test → 42 passed, 0 failed
-- cargo clippy --all-targets --all-features -- -D warnings → clean
+
+feat(cli): implement initial migration SQL generation
+
+- Add schema-to-PostgreSQL CREATE TABLE generation
+- Support column types, defaults, primary keys, and indexes
+- Add mapped table and column names
+- Add identifier quoting
+- Generate initial migration SQL files
+- Expand migration generator tests
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 CURRENT PAUSE

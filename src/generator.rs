@@ -5,18 +5,65 @@ use std::path::Path;
 pub enum GenerateError {
     UnsupportedArrayField { model: String, field: String },
 }
-pub fn generate(schema: &Schema) -> Result<String, GenerateError> {
-    let mut output = String::new();
-    output.push_str(
-        "use rustorm::{\n\
-        entity::{Column, Entity, RelationKey, RelationLoader, SingleRelationLoader},\n\
-        field::Field,\n\
-        query::relation::{ManyToMany, ManyToOne, OneToOne, Relation},\n\
-        };\n\
-        use std::sync::Arc;\n\n",
-    );
 
+pub fn generate(schema: &Schema) -> Result<String, GenerateError> {
     let relations = resolve_relations(schema);
+
+    let has_one_to_many = relations
+        .iter()
+        .any(|relation| matches!(relation.kind, RelationKind::OneToMany));
+
+    let has_many_to_one = relations
+        .iter()
+        .any(|relation| matches!(relation.kind, RelationKind::ManyToOne));
+
+    let has_one_to_one = relations
+        .iter()
+        .any(|relation| matches!(relation.kind, RelationKind::OneToOne));
+
+    let has_many_to_many = relations
+        .iter()
+        .any(|relation| matches!(relation.kind, RelationKind::ManyToMany));
+
+    let mut output = String::new();
+
+    output.push_str("use rustorm::{\n    entity::{Column, Entity, RelationKey");
+
+    if has_one_to_many || has_many_to_many {
+        output.push_str(", RelationLoader");
+    }
+
+    if has_many_to_one || has_one_to_one {
+        output.push_str(", SingleRelationLoader");
+    }
+
+    output.push_str("},\n    field::Field,\n");
+
+    if has_one_to_many || has_many_to_one || has_one_to_one || has_many_to_many {
+        output.push_str("    query::relation::{Relation");
+
+        if has_many_to_many {
+            output.push_str(", ManyToMany");
+        }
+
+        if has_many_to_one {
+            output.push_str(", ManyToOne");
+        }
+
+        if has_one_to_one {
+            output.push_str(", OneToOne");
+        }
+
+        output.push_str("},\n");
+    }
+
+    output.push_str("};\n");
+
+    if has_many_to_one || has_one_to_one || has_many_to_many {
+        output.push_str("use std::sync::Arc;\n");
+    }
+
+    output.push('\n');
 
     for model in &schema.models {
         generate_model(model, &relations, &mut output)?;
@@ -24,6 +71,7 @@ pub fn generate(schema: &Schema) -> Result<String, GenerateError> {
 
     Ok(output)
 }
+
 fn validate_model_crud_support(model: &Model) -> Result<(), GenerateError> {
     for field in &model.fields {
         if field.is_array && !matches!(field.field_type, FieldType::Model(_)) {
@@ -46,7 +94,10 @@ fn generate_update_data(model: &Model, output: &mut String) {
     output.push_str("        let mut columns = Vec::new();\n");
 
     for field in update_data_fields(model) {
-        output.push_str(&format!("        if self.{}.is_some() {{\n", field.name));
+        output.push_str(&format!(
+            "        if self.{}.is_some() {{\n",
+            field_identifier(field)
+        ));
         output.push_str(&format!(
             "            columns.push(\"{}\");\n",
             column_name(field)
@@ -61,26 +112,24 @@ fn generate_update_data(model: &Model, output: &mut String) {
     output.push_str("        let mut values = Vec::new();\n");
 
     for field in update_data_fields(model) {
+        let identifier = field_identifier(field);
+
         output.push_str(&format!(
-            "        if let Some(value) = &self.{} {{\n",
-            field.name
+            "        if let Some(value) = &self.{identifier} {{\n"
         ));
 
         if field.nullable {
             output.push_str("            match value {\n");
-
-            output.push_str("            values.push(");
-            generate_update_non_null_bind_value(field, "value", output);
+            output.push_str("                Some(value) => values.push(");
+            generate_non_null_bind_value(field, "value", output);
             output.push_str("),\n");
-
             output.push_str(
                 "                None => values.push(rustorm::value::BindValue::Null),\n",
             );
-
             output.push_str("            }\n");
         } else {
             output.push_str("            values.push(");
-            generate_update_non_null_bind_value(field, "value", output);
+            generate_non_null_bind_value(field, "value", output);
             output.push_str(");\n");
         }
 
@@ -120,7 +169,11 @@ fn generate_update_struct(model: &Model, output: &mut String) {
             )
         };
 
-        output.push_str(&format!("    pub {}: {},\n", field.name, rust_type));
+        output.push_str(&format!(
+            "    pub {}: {},\n",
+            field_identifier(field),
+            rust_type
+        ));
     }
 
     output.push_str("}\n\n");
@@ -143,15 +196,23 @@ fn generate_model(
 
             let relation_type = relation_model_type(field, relation);
 
-            output.push_str("    #[sqlx(skip)]");
-            output.push_str(&format!("    pub {}: {},\n", field.name, relation_type));
+            output.push_str("    #[sqlx(skip)]\n");
+            output.push_str(&format!(
+                "    pub {}: {},\n",
+                field_identifier(field),
+                relation_type
+            ));
 
             continue;
         }
 
         let rust_type = rust_type(&field.field_type, field.nullable, field.is_array);
 
-        output.push_str(&format!("    pub {}: {},\n", field.name, rust_type));
+        output.push_str(&format!(
+            "    pub {}: {},\n",
+            field_identifier(field),
+            rust_type
+        ));
     }
 
     output.push_str("}\n\n");
@@ -199,7 +260,7 @@ fn generate_model(
         output.push_str("    #[allow(non_upper_case_globals)]\n");
         output.push_str(&format!(
             "    pub const {}: Field<Self, {}> = Field::new(\"{}\");\n\n",
-            field.name,
+            field_identifier(field),
             rust_type,
             column_name(field)
         ));
@@ -216,24 +277,24 @@ fn generate_model(
             RelationKind::OneToMany => {
                 output.push_str(&format!(
                     "    pub const {}: Relation<Self, {}> = \
-                 Relation::new(Self::{}, {}::{});\n\n",
-                    relation.field_name,
+         Relation::new(Self::{}, {}::{});\n\n",
+                    rust_identifier(&relation.field_name),
                     relation.target_model,
-                    relation.source_field,
+                    rust_identifier(&relation.source_field),
                     relation.target_model,
-                    relation.target_field,
+                    rust_identifier(&relation.target_field),
                 ));
             }
 
             RelationKind::ManyToOne => {
                 output.push_str(&format!(
                     "    pub const {}: Relation<Self, {}, ManyToOne> = \
-                 Relation::new(Self::{}, {}::{});\n\n",
-                    relation.field_name,
+         Relation::new(Self::{}, {}::{});\n\n",
+                    rust_identifier(&relation.field_name),
                     relation.target_model,
-                    relation.source_field,
+                    rust_identifier(&relation.source_field),
                     relation.target_model,
-                    relation.target_field,
+                    rust_identifier(&relation.target_field),
                 ));
             }
 
@@ -241,17 +302,18 @@ fn generate_model(
                 output.push_str(&format!(
                     "    pub const {}: Relation<Self, {}, OneToOne> = \
          Relation::new(Self::{}, {}::{});\n\n",
-                    relation.field_name,
+                    rust_identifier(&relation.field_name),
                     relation.target_model,
-                    relation.source_field,
+                    rust_identifier(&relation.source_field),
                     relation.target_model,
-                    relation.target_field,
+                    rust_identifier(&relation.target_field),
                 ));
             }
             RelationKind::ManyToMany => {
                 output.push_str(&format!(
                     "    pub const {}: Relation<Self, {}, ManyToMany> =\n",
-                    relation.field_name, relation.target_model,
+                    rust_identifier(&relation.field_name),
+                    relation.target_model,
                 ));
 
                 output.push_str(&format!(
@@ -259,11 +321,15 @@ fn generate_model(
                     relation.target_model,
                 ));
 
-                output.push_str(&format!("            Self::{},\n", relation.source_field,));
+                output.push_str(&format!(
+                    "            Self::{},\n",
+                    rust_identifier(&relation.source_field),
+                ));
 
                 output.push_str(&format!(
                     "            {}::{},\n",
-                    relation.target_model, relation.target_field,
+                    relation.target_model,
+                    rust_identifier(&relation.target_field),
                 ));
 
                 output.push_str(&format!(
@@ -315,7 +381,11 @@ fn generate_create_struct(model: &Model, output: &mut String) {
 
         let rust_type = rust_type(&field.field_type, field.nullable, field.is_array);
 
-        output.push_str(&format!("    pub {}: {},\n", field.name, rust_type));
+        output.push_str(&format!(
+            "    pub {}: {},\n",
+            field_identifier(field),
+            rust_type
+        ));
     }
 
     output.push_str("}\n\n");
@@ -371,7 +441,7 @@ fn create_data_fields(model: &Model) -> Vec<&crate::ast::Field> {
 }
 
 fn generate_bind_value(field: &crate::ast::Field, output: &mut String) {
-    let value = format!("self.{}", field.name);
+    let value = format!("self.{}", field_identifier(field));
 
     if field.nullable {
         output.push_str(&format!("match &{value} {{\n"));
@@ -381,65 +451,35 @@ fn generate_bind_value(field: &crate::ast::Field, output: &mut String) {
         output.push_str(",\n");
 
         output.push_str("                None => rustorm::value::BindValue::Null,\n");
+
         output.push_str("            }");
     } else {
-        generate_non_null_bind_value(field, &value, output);
+        generate_non_null_bind_value(field, &format!("&{value}"), output);
     }
 }
 
 fn generate_non_null_bind_value(field: &crate::ast::Field, value: &str, output: &mut String) {
     let bind_value = match field.field_type {
-        FieldType::Int => format!("rustorm::value::BindValue::I64(i64::from({value}))"),
-        FieldType::String => {
-            format!("rustorm::value::BindValue::String({value}.clone())")
-        }
-        FieldType::Boolean => {
-            format!("rustorm::value::BindValue::Boolean(*{value})")
-        }
-        FieldType::Float => {
-            format!("rustorm::value::BindValue::F64(*{value})")
-        }
-        FieldType::DateTime => {
-            format!("rustorm::value::BindValue::DateTime({value}.clone())")
-        }
-        FieldType::Decimal => {
-            format!("rustorm::value::BindValue::Decimal({value}.clone())")
-        }
-        FieldType::Json => {
-            format!("rustorm::value::BindValue::Json({value}.clone())")
-        }
-        FieldType::Model(_) => unreachable!("model fields are excluded"),
-    };
-
-    output.push_str(&bind_value);
-}
-
-fn generate_update_non_null_bind_value(
-    field: &crate::ast::Field,
-    value: &str,
-    output: &mut String,
-) {
-    let bind_value = match field.field_type {
         FieldType::Int => {
-            format!("rustorm::value::BindValue::I64(i64::from(*{value}))")
+            format!("rustorm::value::BindValue::I64(i64::from(*({value})))")
         }
         FieldType::String => {
-            format!("rustorm::value::BindValue::String({value}.clone())")
+            format!("rustorm::value::BindValue::String(({value}).clone())")
         }
         FieldType::Boolean => {
-            format!("rustorm::value::BindValue::Boolean(*{value})")
+            format!("rustorm::value::BindValue::Boolean(*({value}))")
         }
         FieldType::Float => {
-            format!("rustorm::value::BindValue::F64(*{value})")
+            format!("rustorm::value::BindValue::F64(*({value}))")
         }
         FieldType::DateTime => {
-            format!("rustorm::value::BindValue::DateTime({value}.clone())")
+            format!("rustorm::value::BindValue::DateTime(({value}).clone())")
         }
         FieldType::Decimal => {
-            format!("rustorm::value::BindValue::Decimal({value}.clone())")
+            format!("rustorm::value::BindValue::Decimal(({value}).clone())")
         }
         FieldType::Json => {
-            format!("rustorm::value::BindValue::Json({value}.clone())")
+            format!("rustorm::value::BindValue::Json(({value}).clone())")
         }
         FieldType::Model(_) => unreachable!("model fields are excluded"),
     };
@@ -464,12 +504,14 @@ fn generate_relation_key(model: &Model, output: &mut String) {
         if field.nullable {
             output.push_str(&format!(
                 "            \"{}\" => self.{}.map(|value| value as i64),\n",
-                column, field.name
+                column,
+                field_identifier(field)
             ));
         } else {
             output.push_str(&format!(
                 "            \"{}\" => Some(self.{} as i64),\n",
-                column, field.name
+                column,
+                field_identifier(field)
             ));
         }
     }
@@ -504,7 +546,7 @@ fn generate_relations_for_model(
 
                 output.push_str(&format!(
                     "        self.{} = related;\n",
-                    relation.field_name
+                    rust_identifier(&relation.field_name)
                 ));
 
                 output.push_str("    }\n");
@@ -524,7 +566,7 @@ fn generate_relations_for_model(
 
                 output.push_str(&format!(
                     "        self.{} = related;\n",
-                    relation.field_name
+                    rust_identifier(&relation.field_name)
                 ));
 
                 output.push_str("    }\n");
@@ -543,7 +585,7 @@ fn generate_relations_for_model(
 
                 output.push_str(&format!(
                     "        self.{} = related;\n",
-                    relation.field_name
+                    rust_identifier(&relation.field_name)
                 ));
 
                 output.push_str("    }\n");
@@ -753,6 +795,13 @@ fn table_name(model: &Model) -> String {
         .unwrap_or_else(|| pluralize(&model.name))
 }
 
+fn field_identifier(field: &crate::ast::Field) -> String {
+    to_snake_case(&field.name)
+}
+fn rust_identifier(name: &str) -> String {
+    to_snake_case(name)
+}
+
 fn column_name(field: &crate::ast::Field) -> String {
     field
         .attributes
@@ -904,7 +953,7 @@ mod tests {
         assert!(generated.contains("pub name: String"));
         assert!(generated.contains("pub active: bool"));
         assert!(generated.contains("pub score: f64"));
-        assert!(generated.contains("pub createdAt: chrono::NaiveDateTime"));
+        assert!(generated.contains("pub created_at: chrono::NaiveDateTime"));
         assert!(generated.contains("pub price: rust_decimal::Decimal"));
         assert!(generated.contains("pub metadata: serde_json::Value"));
     }
@@ -1073,12 +1122,12 @@ mod tests {
         let relations = resolve_relations(&schema);
 
         assert!(relations.contains(&ResolvedRelation {
-            source_model: "Post".to_string(),
-            field_name: "user".to_string(),
-            target_model: "User".to_string(),
-            source_field: "userId".to_string(),
-            target_field: "id".to_string(),
-            kind: RelationKind::ManyToOne,
+            source_model: "User".to_string(),
+            field_name: "posts".to_string(),
+            target_model: "Post".to_string(),
+            source_field: "id".to_string(),
+            target_field: "userId".to_string(),
+            kind: RelationKind::OneToMany,
             pivot_table: None,
             pivot_from: None,
             pivot_to: None,
@@ -1171,7 +1220,7 @@ mod tests {
         assert!(generated.contains("self.posts = related;"));
 
         assert!(generated.contains(
-            "pub const posts: Relation<Self, Post> = Relation::new(Self::id, Post::userId);"
+            "pub const posts: Relation<Self, Post> = Relation::new(Self::id, Post::user_id);"
         ));
 
         // Post.user
@@ -1182,8 +1231,8 @@ mod tests {
         assert!(generated.contains("self.user = related;"));
 
         assert!(generated.contains(
-        "pub const user: Relation<Self, User, ManyToOne> = Relation::new(Self::userId, User::id);"
-    ));
+    "pub const user: Relation<Self, User, ManyToOne> = Relation::new(Self::user_id, User::id);"
+));
     }
     #[test]
     fn generates_relation_key() {
@@ -1215,7 +1264,7 @@ mod tests {
         assert!(generated.contains("impl RelationKey for PostModel"));
         assert!(generated.contains("fn relation_key(&self, column: Column) -> Option<i64>"));
         assert!(generated.contains(r#""id" => Some(self.id as i64)"#));
-        assert!(generated.contains(r#""user_id" => Some(self.userId as i64)"#));
+        assert!(generated.contains(r#""user_id" => Some(self.user_id as i64)"#));
         assert!(generated.contains("_ => None"));
     }
     #[test]
@@ -1287,7 +1336,7 @@ mod tests {
         assert!(generated.contains("pub profile: Option<Arc<ProfileModel>>"));
         assert!(generated.contains(
             "pub const profile: Relation<Self, Profile, OneToOne> = \
-Relation::new(Self::id, Profile::userId);"
+Relation::new(Self::id, Profile::user_id);"
         ));
         assert!(generated.contains("impl SingleRelationLoader<Arc<ProfileModel>> for UserModel"));
         assert!(generated.contains("self.profile = related;"));
@@ -1532,15 +1581,15 @@ Relation::new(Self::id, Profile::userId);"
 
         assert!(generated.contains("&[\"name\", \"age\", \"email\", \"active\", \"score\"]"));
 
-        assert!(generated.contains("rustorm::value::BindValue::String(self.name.clone())"));
+        assert!(generated.contains("rustorm::value::BindValue::String((&self.name).clone())"));
 
-        assert!(generated.contains("rustorm::value::BindValue::I64(i64::from(self.age))"));
+        assert!(generated.contains("rustorm::value::BindValue::I64(i64::from(*(&self.age)))"));
 
         assert!(generated.contains("rustorm::value::BindValue::Null"));
 
-        assert!(generated.contains("rustorm::value::BindValue::Boolean(*self.active)"));
+        assert!(generated.contains("rustorm::value::BindValue::Boolean(*(&self.active))"));
 
-        assert!(generated.contains("rustorm::value::BindValue::F64(*self.score)"));
+        assert!(generated.contains("rustorm::value::BindValue::F64(*(&self.score))"));
 
         let insert_start = generated
             .find("impl rustorm::executor::InsertData<User> for UserCreate")
@@ -1658,5 +1707,73 @@ Relation::new(Self::id, Profile::userId);"
         assert!(generated.contains("if self.email.is_some()"));
 
         assert!(generated.contains("rustorm::value::BindValue::Null"));
+    }
+    #[test]
+    fn generates_snake_case_relation_loader_for_camel_case_field() {
+        let schema = Schema {
+            models: vec![
+                Model {
+                    name: "User".to_string(),
+                    fields: vec![
+                        Field {
+                            name: "id".to_string(),
+                            field_type: FieldType::Int,
+                            nullable: false,
+                            is_array: false,
+                            attributes: vec![FieldAttribute::Id],
+                        },
+                        Field {
+                            name: "userPosts".to_string(),
+                            field_type: FieldType::Model("Post".to_string()),
+                            nullable: false,
+                            is_array: true,
+                            attributes: vec![],
+                        },
+                    ],
+                    attributes: vec![],
+                },
+                Model {
+                    name: "Post".to_string(),
+                    fields: vec![
+                        Field {
+                            name: "id".to_string(),
+                            field_type: FieldType::Int,
+                            nullable: false,
+                            is_array: false,
+                            attributes: vec![FieldAttribute::Id],
+                        },
+                        Field {
+                            name: "userId".to_string(),
+                            field_type: FieldType::Int,
+                            nullable: false,
+                            is_array: false,
+                            attributes: vec![],
+                        },
+                        Field {
+                            name: "user".to_string(),
+                            field_type: FieldType::Model("User".to_string()),
+                            nullable: false,
+                            is_array: false,
+                            attributes: vec![FieldAttribute::Relation(RelationAttribute {
+                                name: None,
+                                fields: vec!["userId".to_string()],
+                                references: vec!["id".to_string()],
+                                through: None,
+                                pivot_from: None,
+                                pivot_to: None,
+                                on_delete: None,
+                            })],
+                        },
+                    ],
+                    attributes: vec![],
+                },
+            ],
+        };
+
+        let generated = generate(&schema).unwrap();
+
+        assert!(generated.contains("pub user_posts: Vec<PostModel>"));
+        assert!(generated.contains("self.user_posts = related;"));
+        assert!(!generated.contains("self.userPosts = related;"));
     }
 }

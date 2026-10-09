@@ -22,7 +22,7 @@ impl rustorm::executor::InsertData<User> for UserCreate {
 
     fn values(&self) -> Vec<rustorm::value::BindValue> {
         vec![
-            rustorm::value::BindValue::String((&self.name).clone()),
+            rustorm::value::BindValue::String(self.name.clone()),
         ]
     }
 }
@@ -43,7 +43,7 @@ impl rustorm::executor::UpdateData<User> for UserUpdate {
     fn values(&self) -> Vec<rustorm::value::BindValue> {
         let mut values = Vec::new();
         if let Some(value) = &self.name {
-            values.push(rustorm::value::BindValue::String((value).clone()));
+            values.push(rustorm::value::BindValue::String(value.clone()));
         }
         values
     }

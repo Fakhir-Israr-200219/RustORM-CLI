@@ -44,6 +44,10 @@ pub enum ValidationError {
         model: String,
         field: String,
     },
+    RelationOnNonModelField {
+        model: String,
+        field: String,
+    },
 }
 
 pub fn validate(schema: &Schema) -> Result<(), ValidationError> {
@@ -115,6 +119,12 @@ pub fn validate(schema: &Schema) -> Result<(), ValidationError> {
                 let crate::ast::FieldAttribute::Relation(relation) = attribute else {
                     continue;
                 };
+                if !matches!(&field.field_type, crate::ast::FieldType::Model(_)) {
+                    return Err(ValidationError::RelationOnNonModelField {
+                        model: model.name.clone(),
+                        field: field.name.clone(),
+                    });
+                }
 
                 let has_pivot_metadata = relation.through.is_some()
                     || relation.pivot_from.is_some()
@@ -122,7 +132,7 @@ pub fn validate(schema: &Schema) -> Result<(), ValidationError> {
 
                 let has_normal_metadata =
                     !relation.fields.is_empty() || !relation.references.is_empty();
-
+               
                 // Many-to-Many relation
                 if has_pivot_metadata {
                     // A Many-to-Many relation must have all pivot
@@ -780,6 +790,47 @@ mod tests {
             Err(ValidationError::MixedRelationMetadata {
                 model: "User".to_string(),
                 field: "roles".to_string(),
+            })
+        );
+    }
+    #[test]
+    fn rejects_relation_on_non_model_field() {
+        let schema = Schema {
+            models: vec![Model {
+                name: "User".to_string(),
+                fields: vec![
+                    Field {
+                        name: "id".to_string(),
+                        field_type: FieldType::Int,
+                        nullable: false,
+                        is_array: false,
+                        attributes: vec![FieldAttribute::Id],
+                    },
+                    Field {
+                        name: "age".to_string(),
+                        field_type: FieldType::Int,
+                        nullable: false,
+                        is_array: false,
+                        attributes: vec![FieldAttribute::Relation(RelationAttribute {
+                            name: None,
+                            fields: vec![],
+                            references: vec![],
+                            through: None,
+                            pivot_from: None,
+                            pivot_to: None,
+                            on_delete: None,
+                        })],
+                    },
+                ],
+                attributes: vec![],
+            }],
+        };
+
+        assert_eq!(
+            validate(&schema),
+            Err(ValidationError::RelationOnNonModelField {
+                model: "User".to_string(),
+                field: "age".to_string(),
             })
         );
     }
