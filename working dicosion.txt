@@ -65,6 +65,10 @@ Legend: ✅ Done / Verified | 🟡 Implemented / Verification Pending | ⏳ Pend
 - [x] Reject conflicting relation metadata
 - [ ] Validate relation cardinality and consistency edge cases
 - [ ] Improve validation error messages and source locations
+- [🟢] Validate referenced columns have suitable primary-key or unique constraints
+- [🟢] Verify matching foreign-key scalar types
+- [🟢] Reject mismatched foreign-key scalar types
+- [🟢] Improve validation errors for foreign-key type mismatches
 
 ## 6. ENTITY GENERATOR
 
@@ -228,8 +232,8 @@ Legend: `[x]` Done / Verified | `[ ]` Pending | `[🟡]` Implemented / Verificat
 
 - [ ] Validate relation cardinality and consistency edge cases
 - [ ] Improve validation error messages
-- [ ] Verify invalid relation metadata handling
-- [ ] Verify referenced fields and relation consistency
+- [🟢] Verify invalid relation metadata handling
+- [🟢] Verify referenced fields and relation consistency
 
 ## 2. ENTITY GENERATOR
 
@@ -260,7 +264,7 @@ Legend: `[x]` Done / Verified | `[ ]` Pending | `[🟡]` Implemented / Verificat
 - [ ] Verify mapped table and column names in foreign keys
 - [ ] Verify `ON DELETE` actions
 - [ ] Verify PostgreSQL identifier quoting and reserved words
-- [ ] Validate referenced columns have suitable primary-key or unique constraints
+- [🟢] Validate referenced columns have suitable primary-key or unique constraints
 - [ ] Verify invalid relation metadata produces useful errors
 - [ ] Generate many-to-many pivot tables
 - [ ] Define and test supported `@updatedAt` migration behavior
