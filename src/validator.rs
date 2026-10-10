@@ -1,4 +1,4 @@
-use crate::ast::Schema;
+use crate::ast::{FieldAttribute, FieldType, Schema};
 use std::collections::HashSet;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -47,6 +47,24 @@ pub enum ValidationError {
     RelationOnNonModelField {
         model: String,
         field: String,
+    },
+    InvalidRelationFieldType {
+        model: String,
+        field: String,
+        relation_field: String,
+    },
+    InvalidRelationReferenceKey {
+        model: String,
+        field: String,
+        referenced_model: String,
+        references: Vec<String>,
+    },
+    RelationFieldTypeMismatch {
+        model: String,
+        field: String,
+        relation_field: String,
+        expected: String,
+        actual: String,
     },
 }
 
@@ -111,7 +129,6 @@ pub fn validate(schema: &Schema) -> Result<(), ValidationError> {
         }
     }
 
-    // 3. Validate relation fields and references
     // 3. Validate relation fields and references
     for model in &schema.models {
         for field in &model.fields {
@@ -201,12 +218,137 @@ pub fn validate(schema: &Schema) -> Result<(), ValidationError> {
                         });
                     }
                 }
+
+                // Every local FK field must be scalar, not another model relation.
+
+                for source_name in &relation.fields {
+                    if let Some(source_field) = model
+                        .fields
+                        .iter()
+                        .find(|candidate| &candidate.name == source_name)
+                        && matches!(&source_field.field_type, FieldType::Model(_))
+                    {
+                        return Err(ValidationError::InvalidRelationFieldType {
+                            model: model.name.clone(),
+                            field: field.name.clone(),
+                            relation_field: source_name.clone(),
+                        });
+                    }
+                }
+
+                // Foreign-key fields must have the same scalar types as
+                // their corresponding referenced fields.
+                // Foreign-key fields must have the same scalar types as
+                // their corresponding referenced fields.
+                for (source_name, reference_name) in
+                    relation.fields.iter().zip(&relation.references)
+                {
+                    let source_field = model
+                        .fields
+                        .iter()
+                        .find(|candidate| &candidate.name == source_name);
+
+                    let target_field = target_model
+                        .fields
+                        .iter()
+                        .find(|candidate| &candidate.name == reference_name);
+
+                    if let (Some(source_field), Some(target_field)) = (source_field, target_field)
+                        && source_field.field_type != target_field.field_type
+                    {
+                        return Err(ValidationError::RelationFieldTypeMismatch {
+                            model: model.name.clone(),
+                            field: field.name.clone(),
+                            relation_field: source_name.clone(),
+                            expected: format!("{:?}", target_field.field_type),
+                            actual: format!("{:?}", source_field.field_type),
+                        });
+                    }
+                }
+
+                // Resolve the referenced model name to the actual model.
+                let referenced_model_name = match &field.field_type {
+                    FieldType::Model(name) => name,
+                    _ => continue,
+                };
+
+                let target_model = schema
+                    .models
+                    .iter()
+                    .find(|candidate| &candidate.name == referenced_model_name)
+                    .ok_or_else(|| ValidationError::UnknownModel {
+                        model: model.name.clone(),
+                        referenced_model: referenced_model_name.clone(),
+                        field: field.name.clone(),
+                    })?;
+
+                // Referenced fields must identify a primary key or a declared unique key.
+                let is_primary_key = relation.references.len() == 1
+                    && target_model.fields.iter().any(|candidate| {
+                        relation.references[0] == candidate.name
+                            && candidate
+                                .attributes
+                                .iter()
+                                .any(|attribute| matches!(attribute, FieldAttribute::Id))
+                    });
+
+                let is_unique_field = relation.references.len() == 1
+                    && target_model.fields.iter().any(|candidate| {
+                        relation.references[0] == candidate.name
+                            && candidate
+                                .attributes
+                                .iter()
+                                .any(|attribute| matches!(attribute, FieldAttribute::Unique))
+                    });
+
+                let is_composite_unique = target_model.attributes.iter().any(|attribute| {
+                    matches!(
+                        attribute,
+                        crate::ast::ModelAttribute::Unique(columns)
+                            if columns == &relation.references
+                    )
+                });
+
+                if !is_primary_key && !is_unique_field && !is_composite_unique {
+                    return Err(ValidationError::InvalidRelationReferenceKey {
+                        model: model.name.clone(),
+                        field: field.name.clone(),
+                        referenced_model: referenced_model_name.clone(),
+                        references: relation.references.clone(),
+                    });
+                }
+                for (source_name, reference_name) in
+                    relation.fields.iter().zip(&relation.references)
+                {
+                    let source_field = model
+                        .fields
+                        .iter()
+                        .find(|candidate| &candidate.name == source_name);
+
+                    let target_field = target_model
+                        .fields
+                        .iter()
+                        .find(|candidate| &candidate.name == reference_name);
+
+                    if let (Some(source_field), Some(target_field)) = (source_field, target_field)
+                        && source_field.field_type != target_field.field_type
+                    {
+                        return Err(ValidationError::RelationFieldTypeMismatch {
+                            model: model.name.clone(),
+                            field: field.name.clone(),
+                            relation_field: source_name.clone(),
+                            expected: format!("{:?}", target_field.field_type),
+                            actual: format!("{:?}", source_field.field_type),
+                        });
+                    }
+                }
             }
         }
     }
 
     Ok(())
 }
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -833,5 +975,484 @@ mod tests {
                 field: "age".to_string(),
             })
         );
+    }
+
+    #[test]
+    fn rejects_foreign_key_field_that_is_another_model() {
+        let schema = Schema {
+            models: vec![
+                Model {
+                    name: "Country".to_string(),
+                    fields: vec![Field {
+                        name: "id".to_string(),
+                        field_type: FieldType::Int,
+                        nullable: false,
+                        is_array: false,
+                        attributes: vec![FieldAttribute::Id],
+                    }],
+                    attributes: vec![],
+                },
+                Model {
+                    name: "User".to_string(),
+                    fields: vec![
+                        Field {
+                            name: "id".to_string(),
+                            field_type: FieldType::Int,
+                            nullable: false,
+                            is_array: false,
+                            attributes: vec![FieldAttribute::Id],
+                        },
+                        Field {
+                            name: "country".to_string(),
+                            field_type: FieldType::Model("Country".to_string()),
+                            nullable: false,
+                            is_array: false,
+                            attributes: vec![],
+                        },
+                    ],
+                    attributes: vec![],
+                },
+                Model {
+                    name: "Post".to_string(),
+                    fields: vec![
+                        Field {
+                            name: "id".to_string(),
+                            field_type: FieldType::Int,
+                            nullable: false,
+                            is_array: false,
+                            attributes: vec![FieldAttribute::Id],
+                        },
+                        Field {
+                            name: "authorId".to_string(),
+                            field_type: FieldType::Model("Country".to_string()),
+                            nullable: false,
+                            is_array: false,
+                            attributes: vec![],
+                        },
+                        Field {
+                            name: "author".to_string(),
+                            field_type: FieldType::Model("User".to_string()),
+                            nullable: false,
+                            is_array: false,
+                            attributes: vec![FieldAttribute::Relation(RelationAttribute {
+                                name: None,
+                                fields: vec!["authorId".to_string()],
+                                references: vec!["id".to_string()],
+                                through: None,
+                                pivot_from: None,
+                                pivot_to: None,
+                                on_delete: None,
+                            })],
+                        },
+                    ],
+                    attributes: vec![],
+                },
+            ],
+        };
+
+        assert_eq!(
+            validate(&schema),
+            Err(ValidationError::InvalidRelationFieldType {
+                model: "Post".to_string(),
+                field: "author".to_string(),
+                relation_field: "authorId".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn rejects_reference_that_is_neither_primary_key_nor_unique() {
+        let schema = Schema {
+            models: vec![
+                Model {
+                    name: "User".to_string(),
+                    fields: vec![
+                        Field {
+                            name: "id".to_string(),
+                            field_type: FieldType::Int,
+                            nullable: false,
+                            is_array: false,
+                            attributes: vec![FieldAttribute::Id],
+                        },
+                        Field {
+                            name: "email".to_string(),
+                            field_type: FieldType::String,
+                            nullable: false,
+                            is_array: false,
+                            attributes: vec![],
+                        },
+                    ],
+                    attributes: vec![],
+                },
+                Model {
+                    name: "Post".to_string(),
+                    fields: vec![
+                        Field {
+                            name: "id".to_string(),
+                            field_type: FieldType::Int,
+                            nullable: false,
+                            is_array: false,
+                            attributes: vec![FieldAttribute::Id],
+                        },
+                        Field {
+                            name: "authorEmail".to_string(),
+                            field_type: FieldType::String,
+                            nullable: false,
+                            is_array: false,
+                            attributes: vec![],
+                        },
+                        Field {
+                            name: "author".to_string(),
+                            field_type: FieldType::Model("User".to_string()),
+                            nullable: false,
+                            is_array: false,
+                            attributes: vec![FieldAttribute::Relation(RelationAttribute {
+                                name: None,
+                                fields: vec!["authorEmail".to_string()],
+                                references: vec!["email".to_string()],
+                                through: None,
+                                pivot_from: None,
+                                pivot_to: None,
+                                on_delete: None,
+                            })],
+                        },
+                    ],
+                    attributes: vec![],
+                },
+            ],
+        };
+
+        assert_eq!(
+            validate(&schema),
+            Err(ValidationError::InvalidRelationReferenceKey {
+                model: "Post".to_string(),
+                field: "author".to_string(),
+                referenced_model: "User".to_string(),
+                references: vec!["email".to_string()],
+            })
+        );
+    }
+
+    #[test]
+    fn accepts_single_field_unique_reference() {
+        let schema = Schema {
+            models: vec![
+                Model {
+                    name: "User".to_string(),
+                    fields: vec![
+                        Field {
+                            name: "id".to_string(),
+                            field_type: FieldType::Int,
+                            nullable: false,
+                            is_array: false,
+                            attributes: vec![FieldAttribute::Id],
+                        },
+                        Field {
+                            name: "email".to_string(),
+                            field_type: FieldType::String,
+                            nullable: false,
+                            is_array: false,
+                            attributes: vec![FieldAttribute::Unique],
+                        },
+                    ],
+                    attributes: vec![],
+                },
+                Model {
+                    name: "Post".to_string(),
+                    fields: vec![
+                        Field {
+                            name: "id".to_string(),
+                            field_type: FieldType::Int,
+                            nullable: false,
+                            is_array: false,
+                            attributes: vec![FieldAttribute::Id],
+                        },
+                        Field {
+                            name: "authorEmail".to_string(),
+                            field_type: FieldType::String,
+                            nullable: false,
+                            is_array: false,
+                            attributes: vec![],
+                        },
+                        Field {
+                            name: "author".to_string(),
+                            field_type: FieldType::Model("User".to_string()),
+                            nullable: false,
+                            is_array: false,
+                            attributes: vec![FieldAttribute::Relation(RelationAttribute {
+                                name: None,
+                                fields: vec!["authorEmail".to_string()],
+                                references: vec!["email".to_string()],
+                                through: None,
+                                pivot_from: None,
+                                pivot_to: None,
+                                on_delete: None,
+                            })],
+                        },
+                    ],
+                    attributes: vec![],
+                },
+            ],
+        };
+
+        assert_eq!(validate(&schema), Ok(()));
+    }
+
+    #[test]
+    fn accepts_composite_unique_reference() {
+        let schema = Schema {
+            models: vec![
+                Model {
+                    name: "TenantUser".to_string(),
+                    fields: vec![
+                        Field {
+                            name: "id".to_string(),
+                            field_type: FieldType::Int,
+                            nullable: false,
+                            is_array: false,
+                            attributes: vec![FieldAttribute::Id],
+                        },
+                        Field {
+                            name: "tenantId".to_string(),
+                            field_type: FieldType::Int,
+                            nullable: false,
+                            is_array: false,
+                            attributes: vec![],
+                        },
+                        Field {
+                            name: "userId".to_string(),
+                            field_type: FieldType::Int,
+                            nullable: false,
+                            is_array: false,
+                            attributes: vec![],
+                        },
+                    ],
+                    attributes: vec![crate::ast::ModelAttribute::Unique(vec![
+                        "tenantId".to_string(),
+                        "userId".to_string(),
+                    ])],
+                },
+                Model {
+                    name: "Membership".to_string(),
+                    fields: vec![
+                        Field {
+                            name: "id".to_string(),
+                            field_type: FieldType::Int,
+                            nullable: false,
+                            is_array: false,
+                            attributes: vec![FieldAttribute::Id],
+                        },
+                        Field {
+                            name: "tenantId".to_string(),
+                            field_type: FieldType::Int,
+                            nullable: false,
+                            is_array: false,
+                            attributes: vec![],
+                        },
+                        Field {
+                            name: "userId".to_string(),
+                            field_type: FieldType::Int,
+                            nullable: false,
+                            is_array: false,
+                            attributes: vec![],
+                        },
+                        Field {
+                            name: "tenantUser".to_string(),
+                            field_type: FieldType::Model("TenantUser".to_string()),
+                            nullable: false,
+                            is_array: false,
+                            attributes: vec![FieldAttribute::Relation(RelationAttribute {
+                                name: None,
+                                fields: vec!["tenantId".to_string(), "userId".to_string()],
+                                references: vec!["tenantId".to_string(), "userId".to_string()],
+                                through: None,
+                                pivot_from: None,
+                                pivot_to: None,
+                                on_delete: None,
+                            })],
+                        },
+                    ],
+                    attributes: vec![],
+                },
+            ],
+        };
+
+        assert_eq!(validate(&schema), Ok(()));
+    }
+
+    #[test]
+    fn accepts_primary_key_reference() {
+        let schema = Schema {
+            models: vec![
+                Model {
+                    name: "User".to_string(),
+                    fields: vec![Field {
+                        name: "id".to_string(),
+                        field_type: FieldType::Int,
+                        nullable: false,
+                        is_array: false,
+                        attributes: vec![FieldAttribute::Id],
+                    }],
+                    attributes: vec![],
+                },
+                Model {
+                    name: "Post".to_string(),
+                    fields: vec![
+                        Field {
+                            name: "id".to_string(),
+                            field_type: FieldType::Int,
+                            nullable: false,
+                            is_array: false,
+                            attributes: vec![FieldAttribute::Id],
+                        },
+                        Field {
+                            name: "authorId".to_string(),
+                            field_type: FieldType::Int,
+                            nullable: false,
+                            is_array: false,
+                            attributes: vec![],
+                        },
+                        Field {
+                            name: "author".to_string(),
+                            field_type: FieldType::Model("User".to_string()),
+                            nullable: false,
+                            is_array: false,
+                            attributes: vec![FieldAttribute::Relation(RelationAttribute {
+                                name: None,
+                                fields: vec!["authorId".to_string()],
+                                references: vec!["id".to_string()],
+                                through: None,
+                                pivot_from: None,
+                                pivot_to: None,
+                                on_delete: None,
+                            })],
+                        },
+                    ],
+                    attributes: vec![],
+                },
+            ],
+        };
+
+        assert_eq!(validate(&schema), Ok(()));
+    }
+    #[test]
+    fn rejects_mismatched_foreign_key_scalar_types() {
+        let schema = Schema {
+            models: vec![
+                Model {
+                    name: "User".to_string(),
+                    fields: vec![Field {
+                        name: "id".to_string(),
+                        field_type: FieldType::Int,
+                        nullable: false,
+                        is_array: false,
+                        attributes: vec![FieldAttribute::Id],
+                    }],
+                    attributes: vec![],
+                },
+                Model {
+                    name: "Post".to_string(),
+                    fields: vec![
+                        Field {
+                            name: "id".to_string(),
+                            field_type: FieldType::Int,
+                            nullable: false,
+                            is_array: false,
+                            attributes: vec![FieldAttribute::Id],
+                        },
+                        Field {
+                            name: "authorId".to_string(),
+                            field_type: FieldType::String,
+                            nullable: false,
+                            is_array: false,
+                            attributes: vec![],
+                        },
+                        Field {
+                            name: "author".to_string(),
+                            field_type: FieldType::Model("User".to_string()),
+                            nullable: false,
+                            is_array: false,
+                            attributes: vec![FieldAttribute::Relation(RelationAttribute {
+                                name: None,
+                                fields: vec!["authorId".to_string()],
+                                references: vec!["id".to_string()],
+                                through: None,
+                                pivot_from: None,
+                                pivot_to: None,
+                                on_delete: None,
+                            })],
+                        },
+                    ],
+                    attributes: vec![],
+                },
+            ],
+        };
+
+        assert_eq!(
+            validate(&schema),
+            Err(ValidationError::RelationFieldTypeMismatch {
+                model: "Post".to_string(),
+                field: "author".to_string(),
+                relation_field: "authorId".to_string(),
+                expected: "Int".to_string(),
+                actual: "String".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn accepts_matching_foreign_key_scalar_types() {
+        let schema = Schema {
+            models: vec![
+                Model {
+                    name: "User".to_string(),
+                    fields: vec![Field {
+                        name: "id".to_string(),
+                        field_type: FieldType::Int,
+                        nullable: false,
+                        is_array: false,
+                        attributes: vec![FieldAttribute::Id],
+                    }],
+                    attributes: vec![],
+                },
+                Model {
+                    name: "Post".to_string(),
+                    fields: vec![
+                        Field {
+                            name: "id".to_string(),
+                            field_type: FieldType::Int,
+                            nullable: false,
+                            is_array: false,
+                            attributes: vec![FieldAttribute::Id],
+                        },
+                        Field {
+                            name: "authorId".to_string(),
+                            field_type: FieldType::Int,
+                            nullable: false,
+                            is_array: false,
+                            attributes: vec![],
+                        },
+                        Field {
+                            name: "author".to_string(),
+                            field_type: FieldType::Model("User".to_string()),
+                            nullable: false,
+                            is_array: false,
+                            attributes: vec![FieldAttribute::Relation(RelationAttribute {
+                                name: None,
+                                fields: vec!["authorId".to_string()],
+                                references: vec!["id".to_string()],
+                                through: None,
+                                pivot_from: None,
+                                pivot_to: None,
+                                on_delete: None,
+                            })],
+                        },
+                    ],
+                    attributes: vec![],
+                },
+            ],
+        };
+
+        assert_eq!(validate(&schema), Ok(()));
     }
 }
