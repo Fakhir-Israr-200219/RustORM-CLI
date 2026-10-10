@@ -132,7 +132,7 @@ pub fn validate(schema: &Schema) -> Result<(), ValidationError> {
 
                 let has_normal_metadata =
                     !relation.fields.is_empty() || !relation.references.is_empty();
-               
+
                 // Many-to-Many relation
                 if has_pivot_metadata {
                     // A Many-to-Many relation must have all pivot

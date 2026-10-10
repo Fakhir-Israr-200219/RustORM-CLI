@@ -17,49 +17,66 @@ fn main() {
 fn run() -> Result<(), String> {
     let args: Vec<String> = env::args().skip(1).collect();
 
-    if args.iter().any(|arg| arg == "--help" || arg == "-h") {
-        print_help();
-        return Ok(());
+    if args.len() == 1 {
+        match args[0].as_str() {
+            "--help" | "-h" => {
+                print_help();
+                return Ok(());
+            }
+            "--version" | "-V" => {
+                println!("RustORM-CLI {}", env!("CARGO_PKG_VERSION"));
+                return Ok(());
+            }
+            _ => {}
+        }
     }
 
-    if args.iter().any(|arg| arg == "--version" || arg == "-V") {
-        println!("RustORM-CLI {}", env!("CARGO_PKG_VERSION"));
-        return Ok(());
+    if let Some(option) = args.iter().find(|arg| arg.starts_with('-')) {
+        return Err(format!(
+            "Unknown option '{option}'. Run 'RustORM-CLI --help' for usage."
+        ));
     }
 
     let (command, schema_path, output_path) = match args.first().map(String::as_str) {
-        Some("validate") => (
-            "validate",
-            args.get(1).map(String::as_str).unwrap_or("rust.schema"),
-            None,
-        ),
-        Some("generate") => (
-            "generate",
-            args.get(1).map(String::as_str).unwrap_or("rust.schema"),
-            None,
-        ),
-        Some("migrate") => (
-            "migrate",
-            args.get(1).map(String::as_str).unwrap_or("rust.schema"),
-            Some(
-                args.get(2)
-                    .map(String::as_str)
-                    .unwrap_or("migrations/0001_initial.sql"),
-            ),
-        ),
-        Some(other) if other.starts_with('-') => {
-            return Err(format!("Unknown option '{other}'. Use --help."));
+        Some("validate") => {
+            validate_argument_count(&args, 1, 2, "validate [SCHEMA]")?;
+            (
+                "validate",
+                args.get(1).map(String::as_str).unwrap_or("rust.schema"),
+                None,
+            )
         }
-        Some(_) => (
-            "generate",
-            args.first().map(String::as_str).unwrap_or("rust.schema"),
-            None,
-        ),
+        Some("generate") => {
+            validate_argument_count(&args, 1, 2, "generate [SCHEMA]")?;
+            (
+                "generate",
+                args.get(1).map(String::as_str).unwrap_or("rust.schema"),
+                None,
+            )
+        }
+        Some("migrate") => {
+            validate_argument_count(&args, 1, 3, "migrate [SCHEMA] [OUTPUT]")?;
+            (
+                "migrate",
+                args.get(1).map(String::as_str).unwrap_or("rust.schema"),
+                Some(
+                    args.get(2)
+                        .map(String::as_str)
+                        .unwrap_or("migrations/0001_initial.sql"),
+                ),
+            )
+        }
+        Some(other) if Path::new(other).is_file() && args.len() == 1 => ("generate", other, None),
+        Some(other) => {
+            return Err(format!(
+                "Unknown command '{other}'. Run 'rustorm --help' for usage."
+            ));
+        }
         None => ("generate", "rust.schema", None),
     };
 
     let source = fs::read_to_string(schema_path)
-        .map_err(|error| format!("Failed to read '{schema_path}': {error}"))?;
+        .map_err(|error| format!("Failed to read schema '{schema_path}': {error}"))?;
 
     let tokens = lexer::tokenize(&source).map_err(|error| format!("Lexer error: {error:?}"))?;
 
@@ -74,14 +91,18 @@ fn run() -> Result<(), String> {
             println!("Schema is valid: {schema_path}");
         }
         "generate" => {
-            generator::write_entities(&schema, "generated/entities.rs")
+            let output_path = "generated/entities.rs";
+
+            generator::write_entities(&schema, output_path)
                 .map_err(|error| format!("Failed to write generated entities: {error}"))?;
 
-            println!("Schema is valid.");
-            println!("Generated entities: generated/entities.rs");
+            println!("Schema is valid: {schema_path}");
+            println!("Generated entities: {output_path}");
         }
         "migrate" => {
-            let output_path = output_path.expect("migrate always has an output path");
+            let output_path =
+                output_path.ok_or_else(|| "Missing migration output path".to_string())?;
+
             let sql = migration::generate_migration(&schema)?;
 
             if let Some(parent) = Path::new(output_path).parent()
@@ -96,28 +117,49 @@ fn run() -> Result<(), String> {
 
             println!("Migration generated: {output_path}");
         }
-        _ => unreachable!(),
+        _ => return Err(format!("Unsupported command '{command}'")),
     }
 
     Ok(())
 }
 
+fn validate_argument_count(
+    args: &[String],
+    minimum: usize,
+    maximum: usize,
+    usage: &str,
+) -> Result<(), String> {
+    if !(minimum..=maximum).contains(&args.len()) {
+        return Err(format!(
+            "Invalid number of arguments.\nUsage: RustORM-CLI {usage}"
+        ));
+    }
+
+    Ok(())
+}
+
+
 fn print_help() {
     println!(
-        "RustORM-CLI {}\n\
+        "rustorm {}\n\
          \n\
          Usage:\n\
-           RustORM-CLI [SCHEMA]\n\
-           RustORM-CLI validate [SCHEMA]\n\
-           RustORM-CLI generate [SCHEMA]\n\
-           RustORM-CLI migrate [SCHEMA] [OUTPUT]\n\
-           RustORM-CLI --help\n\
-           RustORM-CLI --version\n\
+           rustorm [SCHEMA]\n\
+           rustorm validate [SCHEMA]\n\
+           rustorm generate [SCHEMA]\n\
+           rustorm migrate [SCHEMA] [OUTPUT]\n\
+           rustorm --help\n\
+           rustorm --version\n\
          \n\
          Commands:\n\
            validate  Validate a schema\n\
            generate  Generate Rust entities (default)\n\
-           migrate   Generate initial PostgreSQL migration SQL\n",
+           migrate   Generate initial PostgreSQL migration SQL\n\
+         \n\
+         Defaults:\n\
+           SCHEMA    rust.schema\n\
+           OUTPUT    migrations/0001_initial.sql\n",
         env!("CARGO_PKG_VERSION")
     );
 }
+

@@ -520,10 +520,13 @@ mod tests {
                 Model {
                     name: "Parent".to_string(),
                     fields: vec![
-                        field("tenantId", FieldType::Int, false, vec![FieldAttribute::Id]),
                         field("id", FieldType::Int, false, vec![FieldAttribute::Id]),
+                        field("tenantId", FieldType::Int, false, vec![]),
                     ],
-                    attributes: vec![],
+                    attributes: vec![ModelAttribute::Unique(vec![
+                        "tenantId".to_string(),
+                        "id".to_string(),
+                    ])],
                 },
                 Model {
                     name: "Child".to_string(),
@@ -536,13 +539,13 @@ mod tests {
                             FieldType::Model("Parent".to_string()),
                             false,
                             vec![FieldAttribute::Relation(crate::ast::RelationAttribute {
+                                name: None,
                                 fields: vec!["tenantId".to_string(), "parentId".to_string()],
                                 references: vec!["tenantId".to_string(), "id".to_string()],
-                                on_delete: None,
                                 through: None,
                                 pivot_from: None,
                                 pivot_to: None,
-                                name: None,
+                                on_delete: None,
                             })],
                         ),
                     ],
@@ -558,5 +561,8 @@ mod tests {
         ));
 
         assert_eq!(sql.matches("FOREIGN KEY").count(), 1);
+        assert!(sql.contains(
+            r#"CREATE UNIQUE INDEX "parent_tenant_id_id_idx" ON "parent" ("tenant_id", "id")"#
+        ));
     }
 }

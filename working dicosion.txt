@@ -145,8 +145,8 @@ Legend: ✅ Done / Verified | 🟡 Implemented / Verification Pending | ⏳ Pend
 - [ ] Prevent accidental destructive migrations without confirmation
 
 ## 8. CLI COMMANDS
-- [🟡] `rustorm generate` — basic command tested through Cargo; standalone binary naming pending
-- [🟡] `rustorm validate` — basic command tested through Cargo
+- [🟢] `rustorm generate` — basic command tested; standalone binary `rustorm.exe` successfully built
+- [🟢] `rustorm validate` — basic command tested through Cargo
 - [🟡] `rustorm migrate` — initial SQL file generation manually verified; database execution pending
 - [ ] `rustorm migrate dev`
 - [ ] `rustorm migrate reset`
@@ -218,6 +218,103 @@ feat(cli): implement initial migration SQL generation
 - Generate initial migration SQL files
 - Expand migration generator tests
 
+
+
+# RUSTORM CLI — RUNTIME-INDEPENDENT MASTER CHECKLIST
+
+Legend: `[x]` Done / Verified | `[ ]` Pending | `[🟡]` Implemented / Verification Pending
+
+## 1. VALIDATOR
+
+- [ ] Validate relation cardinality and consistency edge cases
+- [ ] Improve validation error messages
+- [ ] Verify invalid relation metadata handling
+- [ ] Verify referenced fields and relation consistency
+
+## 2. ENTITY GENERATOR
+
+### Relations
+- [ ] Verify relation edge cases
+- [ ] Verify generated relation naming
+- [ ] Verify mapped relation keys
+- [ ] Verify many-to-many entity generation
+
+### Create / Insert / Update
+- [ ] Test required versus optional fields
+- [ ] Test default-valued fields
+- [ ] Test nullable fields
+- [ ] Verify primary-key inclusion/exclusion rules
+- [ ] Define and verify `@updatedAt` generation behavior
+- [ ] Add focused Create/Insert/Update tests
+- [ ] Verify generated code compatibility at the compile-time level
+
+## 3. MIGRATION GENERATOR
+
+### SQL Generation and Validation
+- [ ] Verify SQL type mappings
+- [ ] Verify nullable and `NOT NULL` constraints
+- [ ] Verify primary-key and unique constraints
+- [ ] Verify indexes and unique indexes
+- [ ] Verify single foreign-key generation
+- [ ] Verify composite foreign-key generation
+- [ ] Verify mapped table and column names in foreign keys
+- [ ] Verify `ON DELETE` actions
+- [ ] Verify PostgreSQL identifier quoting and reserved words
+- [ ] Validate referenced columns have suitable primary-key or unique constraints
+- [ ] Verify invalid relation metadata produces useful errors
+- [ ] Generate many-to-many pivot tables
+- [ ] Define and test supported `@updatedAt` migration behavior
+- [ ] Add comprehensive migration-generator tests
+
+## 4. CLI COMMANDS
+
+- [ ] Validate command arguments and options
+- [ ] Handle unknown commands
+- [ ] Handle missing, extra, and invalid arguments
+- [ ] Verify appropriate process exit codes
+- [ ] Add CLI integration tests
+- [ ] Implement file-based `migrate status`
+- [ ] Verify `generate`, `validate`, and `migrate` command behavior
+- [ ] Verify help and version output
+
+## 5. PROJECT INTEGRATION — FILESYSTEM AND CONFIGURATION
+
+- [ ] Detect Cargo project root
+- [ ] Detect `rust.schema` automatically
+- [ ] Support a configured schema path
+- [ ] Configure generated output paths
+- [ ] Define a project configuration file
+- [ ] Handle missing or invalid configuration
+- [ ] Prevent accidental overwriting of existing user files
+- [ ] Verify custom schema and migration output paths
+
+## 6. CLI QUALITY AND TESTING
+
+- [ ] Fix the current foreign-key test compilation blocker
+- [ ] Run `cargo fmt`
+- [ ] Run `cargo test`
+- [ ] Run `cargo clippy --all-targets --all-features -- -D warnings`
+- [ ] Add CLI command integration tests
+- [ ] Add schema-to-generated-code end-to-end tests
+- [ ] Add migration-file generation end-to-end tests
+- [ ] Verify error handling and exit codes
+- [ ] Verify a clean build
+
+## 7. DOCUMENTATION AND SAMPLE PROJECT
+
+- [ ] Document schema syntax and supported attributes
+- [ ] Document CLI commands and usage examples
+- [ ] Create a sample project
+- [ ] Verify generated code in the sample project compiles
+- [ ] Document which migration operations require database runtime integration
+
+## OUT OF SCOPE FOR THIS CHECKLIST
+
+- Executing migrations against PostgreSQL
+- Resetting an actual database
+- Tracking applied migrations in a database
+- Database transactions and rollback behavior
+- Full runtime compatibility testing against a live database
 
 
 
