@@ -1,0 +1,63 @@
+Phase 1 — Current blocker fix karo
+
+Project: G:\RustORM-CLI
+- src/ast.rs mein RelationAttribute inspect karo.
+- src/migration.rs ke dono failing foreign-key test initializers fix karo.
+- cargo fmt aur cargo test chalao.
+- Clippy ko warnings-denied mode mein verify karo.
+
+
+
+
+Phase 2 — Foreign-key SQL ko verify karo
+- Single-column foreign key.
+- Composite foreign key.
+- @map aur @@map ke saath correct identifiers.
+- onDelete ke tamam supported actions.
+- Invalid references par meaningful errors.
+Sirf SQL string generate ho jana kaafi nahi; assertions se verify karo ke SQL logically correct bhi hai.
+
+
+
+
+Phase 3 — Generated Rust ki reliability
+- Create/Insert/Update generation verify karo.
+- Required, optional, nullable aur default-valued fields test karo.
+- Generated relations ke naming aur edge cases test karo.
+- Ek real sample Rust project mein generated code compile karwao.
+
+
+
+
+Phase 4 — CLI workflow complete karo
+
+rustorm validate → rustorm generate → rustorm migrate ka predictable behavior establish karo. Uske baad configuration, output paths, file overwrite protection aur command integration tests.
+
+Migration generator ko verify karo
+
+Single/composite foreign keys, onDelete, mapped table/column names, defaults aur indexes ke SQL output ko check karo. Invalid references validator reject kare, aur generated SQL mein correct identifiers hon.
+
+Next
+
+
+2
+
+Generated Rust code ko compile karao
+
+Entity, Create, InsertData, Update aur UpdateData generate karo. Phir unhein ek chhote test Rust project mein compile karke dekho. Sirf generated strings match karne wale tests kaafi nahi hain.
+
+
+
+3
+
+CLI ka complete workflow test karo
+
+Schema file → parse/validate → generated entities → initial migration SQL. Dekho commands actual files likhti hain, errors readable hain aur existing files accidentally overwrite nahi hotin.
+
+
+
+4
+
+Sample project aur release readiness
+
+Ek realistic schema se end-to-end test, documentation update, fresh checkout par build aur final quality checks.

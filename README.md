@@ -1,64 +1,74 @@
 # RustORM CLI
 
-RustORM CLI is the schema and code-generation toolchain for RustORM.
+RustORM CLI is the schema parser, validator, Rust code generator, and initial SQL migration generator for RustORM.
 
-The CLI is responsible for reading `rust.schema`, parsing and validating the schema, generating Rust entities, and eventually generating database migrations.
+It aims to bring a Prisma-inspired development workflow to Rust by using a schema file to describe models, fields, and relations, then generating Rust entity code and initial database schema SQL.
 
-The CLI is separate from the RustORM runtime.
+The CLI is a separate project from the RustORM runtime.
+
+> **Status:** Early development — V0.1  
+> Schema parsing, AST construction, semantic validation, entity and CRUD code generation, and initial SQL migration generation are implemented. Generated-code compilation and full application-level integration still require dedicated end-to-end verification.
 
 ---
 
-# Architecture
+## Architecture
 
 ```text
 rust.schema
-    │
-    ▼
+    |
+    v
 Lexer
-    │
-    ▼
+    |
+    v
 Parser
-    │
-    ▼
+    |
+    v
 Schema AST
-    │
-    ▼
+    |
+    v
 Validator
-    │
-    ├──────────────► Entity Generator
-    │                       │
-    │                       ▼
-    │                generated/entities.rs
-    │
-    └──────────────► Migration Generator
-                            │
-                            ▼
-                       migrations/
+    |
+    +--------------------+
+    |                    |
+    v                    v
+Entity Generator    Migration Generator
+    |                    |
+    v                    v
+generated/          migrations/
+entities.rs         0001_initial.sql
 ```
 
 ## Runtime Boundary
 
 ```text
 RustORM CLI
-    │
-    ├── Schema parsing
-    ├── Schema validation
-    ├── Entity generation
-    └── Migration generation
-              │
-              ▼
+    |
+    +-- Schema parsing
+    +-- Schema validation
+    +-- Rust code generation
+    +-- Initial migration SQL generation
+              |
+              v
        RustORM Runtime
+              |
+              +-- Query building
+              +-- Database execution
+              +-- Entity operations
+              +-- Runtime relations
+              +-- Transactions
 ```
 
-The CLI does **not** reimplement the ORM runtime.
+The CLI is a toolchain, not a second ORM runtime. Generated Rust code targets the existing RustORM runtime and its supporting dependencies.
 
-Generated Rust code depends on the existing RustORM runtime.
+The `migrate` command currently generates an initial SQL file. It does not connect to a database or apply migrations.
 
 ---
 
 # 1. Schema Language
 
 ## Models
+
+Example:
 
 ```text
 model User {
@@ -67,9 +77,13 @@ model User {
 }
 ```
 
-Status: **Complete**
+Models contain fields and may have model-level attributes.
+
+**Status:** Implemented.
 
 ## Scalar Types
+
+The parser recognizes these scalar types:
 
 ```text
 Int
@@ -81,15 +95,32 @@ Decimal
 Json
 ```
 
-Status: **Complete in AST/parser**
+These types are represented in the Schema AST and mapped to Rust types by the entity generator.
+
+| Schema type | Generated Rust type |
+|---|---|
+| `Int` | `i32` |
+| `String` | `String` |
+| `Boolean` | `bool` |
+| `Float` | `f64` |
+| `DateTime` | `chrono::NaiveDateTime` |
+| `Decimal` | `rust_decimal::Decimal` |
+| `Json` | `serde_json::Value` |
+
+Nullable fields use `Option<T>`. Scalar arrays are recognized by the parser and AST, but the current CRUD generator rejects scalar-array fields. Therefore, parser support does not imply complete end-to-end support.
 
 ## Nullable Fields
 
 ```text
-email String?
+model User {
+    id Int @id @default(autoincrement())
+    email String?
+}
 ```
 
-Status: **Complete**
+Nullable fields are represented in the AST and mapped to `Option<T>` in generated model types.
+
+**Status:** Implemented, subject to the limitations of downstream code generation.
 
 ## Array Fields
 
@@ -97,17 +128,19 @@ Status: **Complete**
 tags String[]
 ```
 
-Status: **Complete**
+Array syntax is recognized by the parser.
 
-## Model References
+Model-relation arrays are used for collection relations, for example:
 
 ```text
-author User
+posts Post[]
 ```
 
-Status: **Complete**
+**Limitation:** Scalar arrays such as `String[]` are rejected by the current CRUD code-generation validation. Do not assume that every parsed array type is supported by generated CRUD code or migration SQL.
 
 ## Field Attributes
+
+The parser recognizes:
 
 ```text
 @id
@@ -118,18 +151,70 @@ Status: **Complete**
 @relation(...)
 ```
 
-Status: **Complete**
+Default expressions recognized by the parser include:
 
-## Relation Options
+```text
+autoincrement()
+now()
+cuid()
+true
+false
+integer values
+floating-point values
+string values
+identifier values
+```
+
+**Important:** Parsing an attribute does not guarantee that every use is semantically validated or fully implemented by both generators. In particular, `@updatedAt` does not currently have a demonstrated automatic update behavior in the inspected code generator.
+
+## Model Attributes
+
+The parser recognizes:
+
+```text
+@@map(...)
+@@index(...)
+@@unique(...)
+```
+
+These represent table mapping, indexes, and composite unique constraints.
+
+Migration generation includes support for mapped table names, indexes, and unique indexes. Validator coverage for index and unique field names is not complete.
+
+## Relations
+
+Example:
+
+```text
+model User {
+    id Int @id @default(autoincrement())
+    name String
+    posts Post[]
+}
+
+model Post {
+    id Int @id @default(autoincrement())
+    title String
+    authorId Int
+
+    author User @relation(
+        fields: [authorId],
+        references: [id]
+    )
+}
+```
+
+Relation arguments recognized by the parser include:
 
 ```text
 name
 fields
 references
 onDelete
+through
+pivotFrom
+pivotTo
 ```
-
-Status: **Complete**
 
 Supported referential actions:
 
@@ -140,17 +225,16 @@ SetNull
 NoAction
 ```
 
-Status: **Complete**
+The validator checks relation metadata, referenced fields, reference-key validity, and foreign-key field type compatibility.
 
-## Many-to-Many Relation Options
+**Current limitations:**
 
-```text
-through
-pivotFrom
-pivotTo
-```
+- Ordinary relation code generation resolves only single-column `fields` and `references` relationships.
+- The validator accepts some composite foreign-key metadata, but that does not mean composite relation code generation is implemented.
+- Many-to-many relation metadata is recognized and relation code is generated, but the migration generator does not currently generate many-to-many pivot tables.
+- Relation cardinality and all referential-action compatibility rules are not comprehensively validated.
 
-Status: **Complete**
+## Many-to-Many Syntax
 
 Example:
 
@@ -166,15 +250,9 @@ model User {
 }
 ```
 
-## Model Attributes
+The parser recognizes `through`, `pivotFrom`, and `pivotTo`. The entity generator contains many-to-many relation generation.
 
-```text
-@@map(...)
-@@index(...)
-@@unique(...)
-```
-
-Status: **Complete**
+**Status:** Code-generation support exists; full pivot-table migration generation and external consumer compilation still need verification.
 
 ---
 
@@ -182,18 +260,22 @@ Status: **Complete**
 
 The lexer converts schema source code into tokens.
 
-Current status:
+Implemented token categories include:
 
-```text
-Identifiers                   ✅
-Strings                      ✅
-Numbers                      ✅
-Symbols                      ✅
-Whitespace handling           ✅
-Comments                      ✅
-Invalid character detection   ✅
-Unterminated string errors    ✅
-```
+- Identifiers
+- Strings
+- Numbers
+- Symbols and punctuation
+- Whitespace handling
+- `//` line comments
+- Invalid-character detection
+- Unterminated-string errors
+
+**Current limitations:**
+
+- String escape sequences such as `\"` are not explicitly supported.
+- The lexer collects characters that resemble a number; it does not independently guarantee that the token is a valid numeric literal.
+- Block comments are not supported by the inspected lexer.
 
 ---
 
@@ -201,29 +283,25 @@ Unterminated string errors    ✅
 
 The parser converts tokens into the Schema AST.
 
-Current status:
+Implemented syntax includes:
 
-```text
-Models                       ✅
-Fields                       ✅
-Scalar types                 ✅
-Model references             ✅
-Nullable fields              ✅
-Array fields                 ✅
-Field attributes             ✅
-Model attributes             ✅
-Relations                    ✅
-Relation arguments           ✅
-Referential actions          ✅
-Default values               ✅
-Many-to-many arguments       ✅
-```
+- Models and fields
+- Scalar types and model references
+- Nullable fields and array syntax
+- Field attributes
+- Model attributes
+- Default values
+- Relation arguments
+- Referential actions
+- Many-to-many relation metadata
+
+The parser recognizes the current V0.1 schema syntax. Semantic correctness and support by the generators are handled separately.
 
 ---
 
 # 4. Schema AST
 
-Current AST contains:
+The current AST contains:
 
 ```text
 Schema
@@ -237,7 +315,9 @@ ReferentialAction
 ModelAttribute
 ```
 
-Status: **Complete for current V0.1 schema**
+The AST stores model definitions, field types, nullability, array metadata, field attributes, and model-level attributes.
+
+**Status:** Implemented for the current V0.1 schema language.
 
 ---
 
@@ -245,67 +325,81 @@ Status: **Complete for current V0.1 schema**
 
 The validator checks semantic correctness after parsing.
 
-Current validations:
+## Implemented validations
 
-```text
-Duplicate models                    ✅
-Duplicate fields                   ✅
-Unknown model references           ✅
-Missing primary key                ✅
-Multiple primary keys              ✅
-Unknown relation fields             ✅
-Unknown relation references         ✅
-Relation fields/references mismatch ✅
-Incomplete many-to-many relations   ✅
-Mixed relation metadata             ✅
-```
+- Duplicate model names
+- Duplicate field names
+- Unknown model references
+- Missing primary keys
+- Multiple primary keys
+- Relation attributes on non-model fields
+- Unknown relation fields
+- Unknown relation reference fields
+- Mismatched relation field/reference counts
+- Incomplete many-to-many metadata
+- Mixed many-to-many and ordinary relation metadata
+- Foreign-key fields that are themselves model-relation fields
+- Foreign-key and referenced-field scalar type mismatches
+- Referenced-key validity, including primary keys and supported unique keys
 
-Status: **V0.1 complete**
+Each model currently requires exactly one field-level `@id`. Composite primary keys are not supported by the migration generator.
 
-More advanced validation will be added as the schema language grows.
+## Validation gaps
 
-Planned future validation includes:
+The following areas still need additional validation or more comprehensive checks:
 
-```text
-Relation field type compatibility   ⏳
-Relation cardinality validation     ⏳
-Relation key type validation        ⏳
-Invalid @default validation         ⏳
-Invalid @unique usage               ⏳
-Invalid @@index fields              ⏳
-Invalid @@unique fields             ⏳
-Invalid referential actions         ⏳
-```
+- Relation cardinality and array-shape consistency
+- Default-value compatibility with field types
+- All invalid `@unique` usages
+- Comprehensive `@@index` and `@@unique` field validation
+- Referential-action compatibility with source-field nullability
+- Complete foreign-key nullability and array compatibility checks
+- All relation metadata and many-to-many target constraints
+
+**Status:** Core V0.1 validation implemented; additional semantic checks remain.
 
 ---
 
 # 6. Entity Generator
 
-The entity generator converts the validated Schema AST into Rust source code compatible with the RustORM runtime.
+The entity generator converts a validated Schema AST into Rust source code.
 
-## Current Output
-
-```text
-Model struct                  ✅
-Entity struct                 ✅
-Entity implementation         ✅
-Column definitions            ✅
-Field constants               ✅
-Output file generation        ✅
-Scalar Rust types             ✅
-Nullable Rust types           ✅
-Array Rust types              ✅
-@map support                  ✅
-@@map support                 ✅
-```
-
-Generated file:
+Generated output:
 
 ```text
 generated/entities.rs
 ```
 
-## Example
+The generator writes the output file and creates its parent directory when necessary. Existing output can be overwritten.
+
+## Generated Components
+
+The generator contains support for:
+
+- Model structs
+- Entity marker structs
+- Entity implementations
+- Table and column definitions
+- Typed field constants
+- Scalar Rust types
+- Nullable Rust types
+- Mapped table and column names
+- Relation metadata and loaders
+- Create structs and `InsertData` implementations
+- Update structs and `UpdateData` implementations
+
+## Generated Model Example
+
+For the schema:
+
+```text
+model User {
+    id Int @id @default(autoincrement())
+    name String
+}
+```
+
+The generated code follows this general shape:
 
 ```rust
 #[derive(Debug, sqlx::FromRow)]
@@ -315,407 +409,440 @@ pub struct UserModel {
 }
 
 pub struct User;
-
-impl Entity for User {
-    type Model = UserModel;
-    const TABLE: &'static str = "users";
-
-    const COLUMNS: &'static [Column] = &[
-        Column::new("id"),
-        Column::new("name"),
-    ];
-}
 ```
 
-## Relations
+The generator also emits an entity implementation and typed field constants. Exact generated output depends on the schema and the runtime API.
+
+**Important:** This is an illustrative excerpt, not a guarantee that the excerpt alone compiles. Generated output must be tested against a real consumer crate using compatible runtime and dependency versions.
+
+## Table and Column Mapping
+
+Supported generator behavior includes:
+
+- `@@map` for table names
+- `@map` for column names
+- Generated table and column metadata
+- Basic table-name pluralization when no explicit mapping is provided
+
+The fallback pluralization and snake-case conversion are intentionally simple and may not handle every naming convention correctly.
+
+## Relation Generation
+
+The generator contains support for:
+
+- One-to-many relations
+- Many-to-one relations
+- One-to-one relations
+- Many-to-many relations
+- Relation key metadata
+- Relation loader generation
+- Mapped relation columns
+
+**Limitations:**
+
+- Ordinary relation generation currently requires a single local field and a single referenced field.
+- Composite relation code generation is not implemented.
+- Many-to-many migration pivot-table creation is not implemented.
+- Generated relation code still needs end-to-end compilation and runtime verification.
+
+## Create and Insert Generation
+
+The generator creates `{Model}Create` structs and `InsertData<Model>` implementations.
+
+Current behavior includes:
+
+- Excluding primary-key fields from generated Create structs
+- Excluding model-relation fields
+- Mapping scalar values to the runtime `BindValue` variants
+- Representing nullable values with SQL NULL binding
+- Generating insert column and value information
+
+Scalar-array fields are rejected by CRUD code-generation validation.
+
+Fields with defaults are not universally made optional in Create structs. Application-managed defaults such as CUIDs and identifiers require additional consideration when designing the application-facing creation API.
+
+## Update Generation
+
+The generator creates `{Model}Update` structs and `UpdateData<Model>` implementations.
+
+The intended distinction is:
+
+- Non-nullable fields use `Option<T>` to represent unchanged versus updated values.
+- Nullable fields use `Option<Option<T>>` to distinguish unchanged, set-to-value, and set-to-NULL.
+
+Primary-key and relation fields are excluded from the generated update payload.
+
+**Verification status:** Unit tests cover generated output patterns, but a successful string-generation test does not prove that generated code compiles or behaves correctly in a consuming application.
+
+## Generated Code Dependencies
+
+Generated output references the RustORM runtime and supporting crates, including:
 
 ```text
-One-to-Many                  ✅
-Many-to-One                  ✅
-One-to-One                   ✅
-RelationKey                  ✅
-@map relation keys            ✅
-Many-to-Many                 ✅
+rustorm
+sqlx
+chrono
+rust_decimal
+serde_json
 ```
 
-Many-to-many generation includes:
-
-```text
-Vec<Arc<TargetModel>>
-RelationLoader implementation
-Relation::many_to_many(...)
-Pivot table
-Pivot source column
-Pivot target column
-```
-
-## Create / Update Generation
-
-```text
-Create structs                ✅
-InsertData generation         ⏸️
-Update structs                ⏸️
-UpdateData generation         ⏸️
-```
-
-Create structs currently:
-
-- exclude primary key fields
-- exclude relation fields
-- preserve scalar Rust types
-- preserve nullable types
-- preserve array types
-
-Example:
-
-```rust
-pub struct UserCreate {
-    pub name: String,
-    pub email: Option<String>,
-}
-```
-
-### Why InsertData Is Paused
-
-The generated `InsertData` implementation depends on the runtime `BindValue` system.
-
-Current RustORM runtime:
-
-```rust
-pub enum BindValue {
-    String(String),
-    I64(i64),
-}
-```
-
-The schema language supports additional types:
-
-```text
-Boolean
-Float
-DateTime
-Decimal
-Json
-nullable values
-```
-
-Therefore `InsertData` generation should continue after the runtime binding layer has been expanded.
-
-Current dependency direction:
-
-```text
-RustORM Runtime
-    │
-    ├── Expand BindValue
-    ├── Update executor binding
-    └── Add runtime tests
-            │
-            ▼
-RustORM CLI
-    │
-    ├── InsertData generation
-    ├── Update structs
-    └── UpdateData generation
-```
-
-The CLI must not work around an incomplete runtime binding layer.
+The consuming project must declare compatible dependencies and use runtime APIs matching the generated code. The CLI itself has no external dependencies in its current `Cargo.toml`; it generates source code as text.
 
 ---
 
 # 7. Migration Generator
 
-The migration generator will convert schema information into database migrations.
+The migration generator converts schema information into an initial SQL schema file.
 
-## Planned
+Default output:
 
 ```text
-Read schema                  ⏳
-Detect new models            ⏳
-CREATE TABLE                 ⏳
-Columns                      ⏳
-Primary keys                 ⏳
-Unique constraints           ⏳
-Indexes                      ⏳
-Foreign keys                 ⏳
-ON DELETE actions            ⏳
-ALTER TABLE                  ⏳
-Add columns                  ⏳
-Drop columns                 ⏳
-Rename columns               ⏳
-Add/remove indexes           ⏳
-Join tables                  ⏳
-Migration files              ⏳
-Migration history            ⏳
+migrations/0001_initial.sql
 ```
+
+The output path can be supplied to the CLI.
+
+## Implemented SQL Generation
+
+- `CREATE TABLE`
+- Scalar column definitions
+- Single-column primary keys
+- Integer auto-increment columns using `SERIAL`
+- `NOT NULL` for non-nullable fields
+- Supported scalar SQL types
+- Field-level unique constraints
+- Supported default values
+- Mapped table names
+- Mapped column names
+- `CREATE INDEX`
+- `CREATE UNIQUE INDEX`
+- Foreign-key constraints
+- Supported `ON DELETE` actions
+- Single-column and composite foreign-key SQL metadata where supported by relation definitions
+- Quoted SQL identifiers with embedded quote escaping
+
+## Schema-to-SQL Type Mapping
+
+| Schema type | Generated SQL type |
+|---|---|
+| `Int` | `INTEGER` |
+| `Int @default(autoincrement())` | `SERIAL` |
+| `String` | `TEXT` |
+| `Boolean` | `BOOLEAN` |
+| `Float` | `DOUBLE PRECISION` |
+| `DateTime` | `TIMESTAMP` |
+| `Decimal` | `NUMERIC` |
+| `Json` | `JSONB` |
+
+Array syntax is represented in SQL type generation by appending `[]`, but the complete support of array fields across validation, migration generation, and CRUD generation is not guaranteed.
+
+Application-managed defaults such as CUID and identifier generation are not translated into equivalent SQL defaults by the current migration generator.
+
+## Not Implemented Yet
+
+- Schema diffing
+- `ALTER TABLE` migrations
+- Adding, dropping, or renaming columns
+- Adding or removing indexes through schema diffs
+- Many-to-many pivot-table creation
+- Migration history tracking
+- Migration status command
+- Applying SQL to a live database
+- Automatic rollback
+- Development and reset migration workflows
+
+**Important:** `rustorm migrate` generates an initial SQL file. It does not execute that SQL against PostgreSQL or another database.
 
 ---
 
 # 8. CLI Commands
 
-Planned commands:
+The executable is named `rustorm`.
 
-```text
-rustorm generate
-rustorm validate
+## Help
 
-rustorm migrate
-rustorm migrate dev
-rustorm migrate status
-rustorm migrate reset
+```powershell
+cargo run -- --help
 ```
 
-Status: **Not implemented**
+The CLI also supports `-h`.
 
-The current executable temporarily accepts the schema path as an argument and defaults to:
+## Version
+
+```powershell
+cargo run -- --version
+```
+
+The CLI also supports `-V`.
+
+## Validate a Schema
+
+```powershell
+cargo run -- validate rust.schema
+```
+
+Validates the schema through the lexer, parser, and validator.
+
+## Generate Rust Entities
+
+```powershell
+cargo run -- generate rust.schema
+```
+
+Writes:
+
+```text
+generated/entities.rs
+```
+
+The current generator output path is fixed to `generated/entities.rs`.
+
+## Generate Initial Migration SQL
+
+```powershell
+cargo run -- migrate rust.schema
+```
+
+Writes:
+
+```text
+migrations/0001_initial.sql
+```
+
+To specify another output path:
+
+```powershell
+cargo run -- migrate rust.schema migrations/custom_initial.sql
+```
+
+The output directory is created if necessary. An existing output file can be overwritten.
+
+## Default Behavior
+
+When no arguments are provided, the CLI defaults to generating entities from:
 
 ```text
 rust.schema
 ```
 
-Current execution pipeline:
+Passing a schema file path as the first argument also defaults to entity generation.
 
-```text
-Read schema
-    ↓
-Lexer
-    ↓
-Parser
-    ↓
-Validator
-    ↓
-Entity Generator
-    ↓
-generated/entities.rs
-```
+**Not currently implemented:** `migrate dev`, `migrate status`, `migrate reset`, database connection management, and automatic migration application.
 
 ---
 
 # 9. Project Integration
 
-Target project structure:
+A typical CLI project layout is:
 
 ```text
-myproject/
+RustORM-CLI/
+├── Cargo.toml
 ├── rust.schema
-├── migrations/
-└── myrustproject/
-    ├── Cargo.toml
-    └── src/
-        └── main.rs
+├── rust.relations.schema
+├── src/
+│   ├── main.rs
+│   ├── lexer.rs
+│   ├── parser.rs
+│   ├── ast.rs
+│   ├── validator.rs
+│   ├── generator.rs
+│   └── migration.rs
+├── generated/
+│   └── entities.rs
+└── migrations/
+    └── 0001_initial.sql
 ```
 
-Target workflow:
+Generated Rust code is intended to be consumed by an application using the RustORM runtime.
 
-```bash
-rustorm generate
-```
+Application-level integration still requires verification of:
 
-generates Rust entities.
+- Compatible runtime APIs
+- Required dependencies
+- Generated module declarations
+- Generated-code compilation
+- Database compatibility
+- End-to-end CRUD and relation behavior
 
-```bash
-rustorm migrate dev
-```
-
-creates/applies development migrations.
-
-Generated application code should use the existing RustORM runtime:
-
-```rust
-use rustorm::prelude::*;
-
-let users = User::find()
-    .all(&db)
-    .await?;
-```
-
-Planned integration:
-
-```text
-Detect rust.schema              ⏳
-Detect Cargo project            ⏳
-Generated directory             ⏳
-Generated module integration    ⏳
-Runtime crate integration       ⏳
-Project configuration           ⏳
-```
+The CLI currently does not automatically discover and configure a consumer's Cargo project or integrate generated modules into an application.
 
 ---
 
-# 10. Testing
+# 10. Testing and Verification
 
-Current test status:
+## Current Test Status
 
-```text
-Lexer tests                    ✅
-Parser tests                   ✅
-AST tests                      ✅
-Validator tests                ✅
-Generator tests                ✅
-```
-
-Current total:
+The latest reported CLI test checkpoint is:
 
 ```text
-42 tests
-```
-
-Current verification:
-
-```bash
-cargo test
-```
-
-Result:
-
-```text
-42 passed
+59 passed
 0 failed
 ```
 
-Clippy verification:
+The latest reported Clippy verification is:
 
-```bash
+```powershell
 cargo clippy --all-targets --all-features -- -D warnings
 ```
 
 Result:
 
 ```text
-0 warnings
-0 errors
+Clippy completed without warnings or errors.
 ```
 
-The current CLI checkpoint is therefore:
+These results are based on the latest reported local run and should be refreshed after subsequent code changes.
 
-```text
-42 tests passing
-Clippy clean
-```
+## Test Coverage Areas
+
+- Lexer tokenization and error handling
+- Parser syntax and AST construction
+- Schema validation
+- Model and field constraints
+- Relation metadata and referenced keys
+- Foreign-key scalar type compatibility
+- Entity and relation code generation
+- Create and update code generation
+- SQL migration generation
+- Identifier quoting and mapped names
+- Foreign-key SQL generation
+
+## Verification Still Needed
+
+Passing unit tests does not by itself establish that the generated source compiles in an independent consumer project.
+
+Priority verification tasks:
+
+1. Generate entities from `rust.schema`.
+2. Compile the generated output inside a real consumer crate.
+3. Repeat with `rust.relations.schema`.
+4. Add compilation tests for Create/InsertData and Update/UpdateData implementations.
+5. Verify relation loading against the actual runtime.
+6. Verify generated migration SQL against a PostgreSQL database.
+7. Add CLI end-to-end tests for `validate`, `generate`, and `migrate`.
+8. Test error handling and overwriting behavior for generated files.
 
 ---
 
-# 11. Development Order
+# 11. Development Roadmap
 
-The implementation order is intentionally:
+## Phase 1 — Verify Generated Code
 
-```text
-1. Schema Language
-       ↓
-2. Lexer
-       ↓
-3. Parser
-       ↓
-4. AST
-       ↓
-5. Validator
-       ↓
-6. Entity Generator
-       ↓
-7. Migration Generator
-       ↓
-8. CLI Commands
-       ↓
-9. Project Integration
-       ↓
-10. End-to-End Testing
-```
+- [x] Inspect the current schema lexer, parser, AST, validator, and generators.
+- [x] Implement core Create and Update code-generation paths.
+- [x] Implement initial SQL migration generation.
+- [ ] Compile generated output in an independent consumer crate.
+- [ ] Verify generated CRUD implementations against the current runtime.
+- [ ] Verify relation code generation end to end.
+- [ ] Verify initial migration SQL against PostgreSQL.
 
-Within the Entity Generator, runtime-dependent CRUD generation is developed only after the runtime APIs required by generated code are ready.
+## Phase 2 — Improve Schema and Generator Reliability
 
-Do not implement later stages prematurely.
+- [ ] Validate default values against field types.
+- [ ] Improve `@@index` and `@@unique` field validation.
+- [ ] Validate relation cardinality and array-shape consistency.
+- [ ] Validate `SetNull` and other referential-action compatibility.
+- [ ] Resolve composite-relation code-generation limitations.
+- [ ] Review scalar-array support and its restrictions.
+- [ ] Improve naming and pluralization behavior.
+- [ ] Ensure generated code handles defaults consistently.
+
+## Phase 3 — Complete CLI Workflows
+
+- [x] `validate`
+- [x] `generate`
+- [x] Initial SQL generation through `migrate`
+- [x] Help and version arguments
+- [ ] Add CLI end-to-end tests.
+- [ ] Improve error messages and failure cases.
+- [ ] Review safe handling of existing generated files.
+- [ ] Document command behavior and output paths.
+
+## Phase 4 — Migration System
+
+- [x] Generate initial `CREATE TABLE` SQL.
+- [x] Generate supported indexes and foreign-key constraints.
+- [ ] Generate schema-diff migrations.
+- [ ] Add `ALTER TABLE` support.
+- [ ] Add migration history.
+- [ ] Add migration status reporting.
+- [ ] Add safe migration application.
+- [ ] Design rollback and reset workflows.
+- [ ] Generate many-to-many pivot tables.
+
+## Phase 5 — Release Readiness
+
+- [ ] Add a sample application using the runtime.
+- [ ] Add generated-code compilation tests.
+- [ ] Add database integration tests.
+- [ ] Document supported and unsupported schema features.
+- [ ] Document dependency and runtime-version requirements.
+- [ ] Prepare a reproducible V0.1 example workflow.
 
 ---
 
 # 12. Current Milestone
 
-Current milestone:
+**V0.1 — Schema → Validated AST → Generated Rust and Initial SQL**
 
-**V0.1 — Schema → Validated AST → Entity Generation**
+## Implemented
 
-Completed:
+- [x] Lexer
+- [x] Parser
+- [x] Schema AST
+- [x] Core semantic validation
+- [x] Model and entity generation
+- [x] Typed field generation
+- [x] Relation code-generation paths
+- [x] Create struct generation
+- [x] `InsertData` generation
+- [x] Update struct generation
+- [x] `UpdateData` generation
+- [x] Initial SQL migration generation
+- [x] `validate` command
+- [x] `generate` command
+- [x] `migrate` command for SQL file generation
+- [x] Help and version arguments
+- [x] 59 tests passing at the latest reported checkpoint
+- [x] Clippy clean at the latest reported checkpoint
 
-```text
-Schema parsing                 ✅
-AST                            ✅
-Validation                     ✅
-Model generation               ✅
-Entity generation              ✅
-Field generation               ✅
-Relation generation            ✅
-Many-to-many generation        ✅
-RelationKey generation         ✅
-Create struct generation       ✅
-Generated file output           ✅
-42 tests                       ✅
-Clippy clean                   ✅
-```
+## Remaining Before a Reliable V0.1 Release
 
-Current paused work:
+- [ ] Verify generated Rust code compiles in a consumer project.
+- [ ] Verify CRUD and relation behavior against the runtime.
+- [ ] Verify migration SQL against a real database.
+- [ ] Add CLI end-to-end tests.
+- [ ] Resolve or clearly document unsupported schema combinations.
+- [ ] Complete the user-facing usage guide.
 
-```text
-InsertData generation          ⏸️
-Update struct generation       ⏸️
-UpdateData generation          ⏸️
-```
-
-Reason:
-
-The RustORM runtime's `BindValue` and executor binding layer currently support only a subset of the schema language's scalar/nullable values.
-
-## Next Runtime Milestone
-
-Before continuing CRUD code generation in the CLI:
-
-```text
-1. Expand BindValue
-        ↓
-2. Update executor binding
-        ↓
-3. Add runtime tests
-        ↓
-4. Return to CLI InsertData generation
-        ↓
-5. Generate Update structs
-        ↓
-6. Generate UpdateData
-```
-
-After Entity Generator completion:
-
-```text
-Migration Generator
-        ↓
-CLI Commands
-        ↓
-Project Integration
-        ↓
-End-to-End Testing
-```
+The implementation is beyond basic entity generation, but it should not be considered fully production-ready until generated-code compilation, runtime integration, and database behavior have been verified.
 
 ---
 
-# 13. Design Principle
+# 13. Design Principles
 
-The RustORM CLI should remain a **toolchain**, not a second ORM runtime.
+RustORM CLI should remain a schema and code-generation toolchain.
 
 ```text
 CLI
-├── Understand schema
-├── Parse schema
+├── Read schema
+├── Tokenize and parse
+├── Build AST
 ├── Validate schema
 ├── Generate Rust code
-└── Generate migrations
+└── Generate initial SQL
 
 Runtime
-├── Connect to database
+├── Connect to databases
 ├── Build queries
-├── Execute queries
-├── Manage entities
-└── Manage runtime ORM behavior
+├── Execute database operations
+├── Manage entities and relations
+└── Handle transactions
 ```
 
-The CLI generates code for the existing RustORM runtime.
+The CLI should generate code for the existing runtime rather than reimplement runtime behavior.
 
-The CLI should not duplicate runtime functionality.
+Features should be marked complete only at the appropriate level: parser support, validation, code generation, compilation, and runtime behavior are distinct milestones.
 
-This separation should be maintained as the project grows.
+This separation is central to the long-term design of RustORM.

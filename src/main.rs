@@ -138,7 +138,6 @@ fn validate_argument_count(
     Ok(())
 }
 
-
 fn print_help() {
     println!(
         "rustorm {}\n\
@@ -162,4 +161,3 @@ fn print_help() {
         env!("CARGO_PKG_VERSION")
     );
 }
-
