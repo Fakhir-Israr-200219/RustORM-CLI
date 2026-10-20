@@ -1,4 +1,13 @@
+
 model User {
     id Int @id @default(autoincrement())
     name String
+    posts Post[]
+}
+
+model Post {
+    id Int @id @default(autoincrement())
+    title String
+    userId Int
+    user User @relation(fields: [userId], references: [id])
 }
