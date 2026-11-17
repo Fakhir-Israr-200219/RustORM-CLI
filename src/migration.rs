@@ -2,6 +2,8 @@ use crate::ast::{
     DefaultValue, Field, FieldAttribute, FieldType, Model, ModelAttribute, ReferentialAction,
     Schema,
 };
+use crate::naming::{column_name, table_name, to_snake_case};
+
 use std::fmt::Write;
 
 pub fn generate_migration(schema: &Schema) -> Result<String, String> {
@@ -299,7 +301,7 @@ fn index_sql(model: &Model, fields: &[String], unique: bool) -> Result<String, S
         table_name(model),
         fields
             .iter()
-            .map(|name| snake_case(name))
+            .map(|name| to_snake_case(name))
             .collect::<Vec<_>>()
             .join("_")
     );
@@ -322,45 +324,8 @@ fn referential_action(action: &ReferentialAction) -> &'static str {
     }
 }
 
-fn table_name(model: &Model) -> String {
-    model
-        .attributes
-        .iter()
-        .find_map(|attribute| match attribute {
-            ModelAttribute::Map(name) => Some(name.clone()),
-            _ => None,
-        })
-        .unwrap_or_else(|| snake_case(&model.name))
-}
-
-fn column_name(field: &Field) -> String {
-    field
-        .attributes
-        .iter()
-        .find_map(|attribute| match attribute {
-            FieldAttribute::Map(name) => Some(name.clone()),
-            _ => None,
-        })
-        .unwrap_or_else(|| snake_case(&field.name))
-}
 fn quote_identifier(name: &str) -> String {
     format!("\"{}\"", name.replace('"', "\"\""))
-}
-fn snake_case(name: &str) -> String {
-    let mut result = String::new();
-
-    for (index, ch) in name.chars().enumerate() {
-        if ch.is_uppercase() {
-            if index > 0 {
-                result.push('_');
-            }
-            result.extend(ch.to_lowercase());
-        } else {
-            result.push(ch);
-        }
-    }
-
-    result
 }
 
 #[cfg(test)]
@@ -398,7 +363,7 @@ mod tests {
 
         let sql = generate_migration(&schema).unwrap();
 
-        assert!(sql.contains("CREATE TABLE \"user\""));
+        assert!(sql.contains("CREATE TABLE \"users\""));
         assert!(sql.contains("\"id\" INTEGER NOT NULL"));
         assert!(sql.contains("\"email\" TEXT NOT NULL"));
         assert!(sql.contains("\"nickname\" TEXT"));
@@ -510,7 +475,7 @@ mod tests {
 
         let sql = generate_migration(&schema).unwrap();
 
-        assert!(sql.contains(r#"FOREIGN KEY ("user_id") REFERENCES "user" ("id")"#));
+        assert!(sql.contains(r#"FOREIGN KEY ("user_id") REFERENCES "users" ("id")"#));
     }
 
     #[test]
@@ -557,12 +522,12 @@ mod tests {
         let sql = generate_migration(&schema).unwrap();
 
         assert!(sql.contains(
-            r#"FOREIGN KEY ("tenant_id", "parent_id") REFERENCES "parent" ("tenant_id", "id")"#
+            r#"FOREIGN KEY ("tenant_id", "parent_id") REFERENCES "parents" ("tenant_id", "id")"#
         ));
 
         assert_eq!(sql.matches("FOREIGN KEY").count(), 1);
         assert!(sql.contains(
-            r#"CREATE UNIQUE INDEX "parent_tenant_id_id_idx" ON "parent" ("tenant_id", "id")"#
+            r#"CREATE UNIQUE INDEX "parents_tenant_id_id_idx" ON "parents" ("tenant_id", "id")"#
         ));
     }
 }

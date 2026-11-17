@@ -4,6 +4,7 @@ mod lexer;
 mod migration;
 mod parser;
 mod validator;
+mod naming;
 
 use std::{env, fs, path::Path, process};
 

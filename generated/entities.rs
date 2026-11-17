@@ -107,7 +107,7 @@ pub struct PostCreate {
 
 impl rustorm::executor::InsertData<Post> for PostCreate {
     fn columns(&self) -> &'static [&'static str] {
-        &["title", "userId"]
+        &["title", "user_id"]
     }
 
     fn values(&self) -> Vec<rustorm::value::BindValue> {
@@ -130,7 +130,7 @@ impl rustorm::executor::UpdateData<Post> for PostUpdate {
             columns.push("title");
         }
         if self.user_id.is_some() {
-            columns.push("userId");
+            columns.push("user_id");
         }
         columns
     }
@@ -153,7 +153,7 @@ impl Entity for Post {
     const COLUMNS: &'static [Column] = &[
         Column::new("id"),
         Column::new("title"),
-        Column::new("userId"),
+        Column::new("user_id"),
     ];
 }
 
@@ -165,7 +165,7 @@ impl Post {
     pub const title: Field<Self, String> = Field::new("title");
 
     #[allow(non_upper_case_globals)]
-    pub const user_id: Field<Self, i32> = Field::new("userId");
+    pub const user_id: Field<Self, i32> = Field::new("user_id");
 
     #[allow(non_upper_case_globals)]
     pub const user: Relation<Self, User, ManyToOne> = Relation::new(Self::user_id, User::id);
@@ -176,7 +176,7 @@ impl RelationKey for PostModel {
     fn relation_key(&self, column: Column) -> Option<i64> {
         match column.name() {
             "id" => Some(self.id as i64),
-            "userId" => Some(self.user_id as i64),
+            "user_id" => Some(self.user_id as i64),
             _ => None,
         }
     }

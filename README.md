@@ -732,7 +732,7 @@ Priority verification tasks:
 - [x] Inspect the current schema lexer, parser, AST, validator, and generators.
 - [x] Implement core Create and Update code-generation paths.
 - [x] Implement initial SQL migration generation.
-- [ ] Compile generated output in an independent consumer crate.
+- [x] Compile generated output in an independent consumer crate.
 - [ ] Verify generated CRUD implementations against the current runtime.
 - [ ] Verify relation code generation end to end.
 - [ ] Verify initial migration SQL against PostgreSQL.

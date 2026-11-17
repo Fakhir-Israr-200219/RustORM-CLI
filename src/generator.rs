@@ -1,6 +1,7 @@
 use crate::ast::{FieldAttribute, FieldType, Model, Schema};
 use std::fs;
 use std::path::Path;
+use crate::naming::{column_name, rust_identifier, table_name};
 #[derive(Debug, Clone, PartialEq)]
 pub enum GenerateError {
     UnsupportedArrayField { model: String, field: String },
@@ -783,52 +784,8 @@ fn rust_type(field_type: &FieldType, nullable: bool, is_array: bool) -> String {
         base_type
     }
 }
-
-fn table_name(model: &Model) -> String {
-    model
-        .attributes
-        .iter()
-        .find_map(|attribute| match attribute {
-            crate::ast::ModelAttribute::Map(name) => Some(name.clone()),
-            _ => None,
-        })
-        .unwrap_or_else(|| pluralize(&model.name))
-}
-
 fn field_identifier(field: &crate::ast::Field) -> String {
-    to_snake_case(&field.name)
-}
-fn rust_identifier(name: &str) -> String {
-    to_snake_case(name)
-}
-
-fn column_name(field: &crate::ast::Field) -> String {
-    field
-        .attributes
-        .iter()
-        .find_map(|attribute| match attribute {
-            crate::ast::FieldAttribute::Map(name) => Some(name.clone()),
-            _ => None,
-        })
-        .unwrap_or_else(|| field.name.clone())
-}
-
-fn pluralize(name: &str) -> String {
-    format!("{}s", to_snake_case(name))
-}
-
-fn to_snake_case(name: &str) -> String {
-    let mut result = String::new();
-
-    for (index, character) in name.chars().enumerate() {
-        if character.is_uppercase() && index > 0 {
-            result.push('_');
-        }
-
-        result.push(character.to_ascii_lowercase());
-    }
-
-    result
+    rust_identifier(&field.name)
 }
 
 pub fn write_entities<P: AsRef<Path>>(schema: &Schema, output_path: P) -> Result<(), String> {
