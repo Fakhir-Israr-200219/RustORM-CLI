@@ -2,11 +2,21 @@ mod ast;
 mod generator;
 mod lexer;
 mod migration;
+mod naming;
 mod parser;
 mod validator;
-mod naming;
 
 use std::{env, fs, path::Path, process};
+
+const SCHEMA_TEMPLATE: &str = r#"// RustORM Schema
+// Documentation: https://github.com/Fakhir-Israr-200219/RustORM
+
+model User {
+    id    Int    @id @default(autoincrement())
+    name  String
+    email String @unique
+}
+"#;
 
 fn main() {
     if let Err(error) = run() {
@@ -46,6 +56,100 @@ fn run() -> Result<(), String> {
                 args.get(1).map(String::as_str).unwrap_or("rust.schema"),
                 None,
             )
+        }
+        Some("init") => {
+            let rustorm_dir = Path::new(".rustorm");
+
+            if rustorm_dir.exists() {
+                println!(".rustorm/ already exists. Skipping init.");
+                return Ok(());
+            }
+
+            // Create directories
+            fs::create_dir_all(rustorm_dir.join("generated"))
+                .map_err(|e| format!("Failed to create .rustorm/generated/: {e}"))?;
+            fs::create_dir_all(rustorm_dir.join("migrations"))
+                .map_err(|e| format!("Failed to create .rustorm/migrations/: {e}"))?;
+
+            // Write schema template
+            fs::write(rustorm_dir.join("schema.rustorm"), SCHEMA_TEMPLATE)
+                .map_err(|e| format!("Failed to write schema.rustorm: {e}"))?;
+
+            println!("✅ Initialized RustORM project");
+            println!();
+            println!("  📁 .rustorm/schema.rustorm   ← Edit your schema here");
+            println!("  📁 .rustorm/generated/       ← Entities will be generated here");
+            println!("  📁 .rustorm/migrations/      ← Migration SQL will be generated here");
+            println!();
+            println!("Next steps:");
+            println!("  1. Edit .rustorm/schema.rustorm");
+            println!("  2. Run: rustorm dev");
+            return Ok(());
+        }
+        Some("dev") => {
+            let schema_path = Path::new(".rustorm/schema.rustorm");
+            let entities_output = Path::new(".rustorm/generated/entities.rs");
+            let migrations_dir = Path::new(".rustorm/migrations");
+            let snapshot_path = Path::new(".rustorm/migrations/snapshot.json");
+
+            if !schema_path.exists() {
+                return Err("No .rustorm/schema.rustorm found. Run 'rustorm init' first.".into());
+            }
+
+            // Read and parse schema
+            let source = fs::read_to_string(schema_path)
+                .map_err(|e| format!("Failed to read schema: {e}"))?;
+
+            let tokens = lexer::tokenize(&source).map_err(|e| format!("Lexer error: {e:?}"))?;
+
+            let schema = parser::Parser::new(tokens)
+                .parse()
+                .map_err(|e| format!("Parser error: {e:?}"))?;
+
+            validator::validate(&schema).map_err(|e| format!("Validation error: {e:?}"))?;
+
+            // Check if schema changed (snapshot comparison)
+            let current_content = source.clone();
+            let schema_changed = if snapshot_path.exists() {
+                let old_content = fs::read_to_string(snapshot_path).unwrap_or_default();
+                old_content != current_content
+            } else {
+                true // First run
+            };
+
+            if !schema_changed {
+                println!("📋 Schema unchanged. Nothing to regenerate.");
+                return Ok(());
+            }
+
+            // ... (generation code same rahega) ...
+
+            // Save snapshot (raw content, not debug format)
+            fs::write(snapshot_path, &current_content)
+                .map_err(|e| format!("Failed to save snapshot: {e}"))?;
+
+            generator::write_entities(&schema, entities_output)
+                .map_err(|e| format!("Failed to generate entities: {e}"))?;
+
+            println!("✅ Generated: .rustorm/generated/entities.rs");
+
+            // Generate migration
+            fs::create_dir_all(migrations_dir)
+                .map_err(|e| format!("Failed to create migrations dir: {e}"))?;
+
+            let migration_sql = migration::generate_migration(&schema)?;
+            let migration_file = migrations_dir.join("0001_initial.sql");
+            fs::write(&migration_file, &migration_sql)
+                .map_err(|e| format!("Failed to write migration: {e}"))?;
+
+            println!("✅ Generated: .rustorm/migrations/0001_initial.sql");
+
+            println!("💾 Snapshot saved");
+            println!();
+            println!("Next: Apply migration with:");
+            println!("  psql -U postgres -d YOUR_DB -f .rustorm/migrations/0001_initial.sql");
+
+            return Ok(());
         }
         Some("generate") => {
             validate_argument_count(&args, 1, 2, "generate [SCHEMA]")?;
@@ -138,7 +242,6 @@ fn validate_argument_count(
 
     Ok(())
 }
-
 fn print_help() {
     println!(
         "rustorm {}\n\
@@ -148,10 +251,14 @@ fn print_help() {
            rustorm validate [SCHEMA]\n\
            rustorm generate [SCHEMA]\n\
            rustorm migrate [SCHEMA] [OUTPUT]\n\
+           rustorm init\n\
+           rustorm dev\n\
            rustorm --help\n\
            rustorm --version\n\
          \n\
          Commands:\n\
+           init      Initialize a new RustORM project\n\
+           dev       Watch schema and auto-generate\n\
            validate  Validate a schema\n\
            generate  Generate Rust entities (default)\n\
            migrate   Generate initial PostgreSQL migration SQL\n\
