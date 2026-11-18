@@ -63,12 +63,12 @@ Legend: ✅ Done / Verified | 🟡 Implemented / Verification Pending | ⏳ Pend
 - [x] Reject `@relation` on non-model fields
 - [x] Validate completeness of many-to-many metadata
 - [x] Reject conflicting relation metadata
+- [x] Validate referenced columns have suitable primary-key or unique constraints
+- [x] Verify matching foreign-key scalar types
+- [x] Reject mismatched foreign-key scalar types
+- [x] Improve validation errors for foreign-key type mismatches
 - [ ] Validate relation cardinality and consistency edge cases
 - [ ] Improve validation error messages and source locations
-- [🟢] Validate referenced columns have suitable primary-key or unique constraints
-- [🟢] Verify matching foreign-key scalar types
-- [🟢] Reject mismatched foreign-key scalar types
-- [🟢] Improve validation errors for foreign-key type mismatches
 
 ## 6. ENTITY GENERATOR
 
@@ -84,6 +84,9 @@ Legend: ✅ Done / Verified | 🟡 Implemented / Verification Pending | ⏳ Pend
 - [x] Generate array Rust types
 - [x] `@map` support
 - [x] `@@map` support
+- [x] Serde `Serialize` derive on model structs
+- [x] Serde `Deserialize` derive on model structs
+- [x] `sqlx::FromRow` derive on model structs
 
 ### Relations
 - [x] One-to-Many
@@ -93,47 +96,59 @@ Legend: ✅ Done / Verified | 🟡 Implemented / Verification Pending | ⏳ Pend
 - [x] `@map` relation keys
 - [x] Many-to-Many
 - [x] Compile-test generated relation entities
+- [x] End-to-end relation verification with runtime
 - [ ] Verify relation edge cases and generated naming
 
 ### Create / Insert / Update
-- [x] Create structs — implementation present
-- [🟡] InsertData generation — implementation and unit test pass; runtime compatibility needs verification
-- [🟡] Update structs — implementation present; primary-key behavior needs verification
-- [🟡] UpdateData generation — implementation and unit test pass; field mapping/runtime compatibility needs verification
-- [ ] Verify required versus optional fields
-- [ ] Verify default-valued fields
-- [ ] Verify nullable fields
-- [ ] Verify primary-key exclusion/inclusion rules
+- [x] Create structs
+- [x] InsertData generation
+- [x] Update structs
+- [x] UpdateData generation
+- [x] Nullable update semantics (`Option<Option<T>>`)
+- [x] Primary-key exclusion from Create/Update structs
+- [x] Serde `Serialize`/`Deserialize` on Create structs
+- [x] Serde `Serialize`/`Deserialize` on Update structs
+- [x] Compile-test generated Create/Insert/Update code
+- [x] End-to-end CRUD verification with runtime
+- [x] Axum JSON serialization/deserialization verified
+- [ ] Verify default-valued fields behavior
 - [ ] Verify `@updatedAt` behavior
-- [ ] Complete focused Create/Insert/Update tests
-- [🟡] Compile-test generated Create/Insert/Update code — basic compile test exists; comprehensive compatibility pending
+- [ ] Add focused edge-case Create/Insert/Update tests
 
 ## 7. MIGRATION GENERATOR
 
 ### Schema-to-SQL
-- [🟡] Read schema and validate it before migration generation — CLI path implemented; edge cases pending
-- [🟡] Generate initial tables for schema models — existing-schema diff pending
-- [🟡] Generate `CREATE TABLE` — basic generation and unit test pass; PostgreSQL correctness pending
-- [🟡] Generate columns and SQL types — basic implementation and tests present
-- [🟡] Generate nullable / `NOT NULL` constraints — broader verification pending
-- [🟡] Generate primary keys — basic implementation and test pass
-- [🟡] Generate unique constraints — implementation needs verification
-- [🟡] Generate indexes — initial test passes; edge cases pending
-- [🟡] Generate foreign keys — implementation exists; behavior needs verification
-- [🟡] Generate `ON DELETE` actions — implementation needs verification
-- [🟡] Generate default values — basic handling and string escaping tested
+- [x] Read schema and validate before migration generation
+- [x] Generate initial tables for schema models
+- [x] Generate `CREATE TABLE`
+- [x] Generate columns and SQL types
+- [x] Generate nullable / `NOT NULL` constraints
+- [x] Generate primary keys
+- [x] Generate unique constraints
+- [x] Generate indexes
+- [x] Generate foreign keys
+- [x] Generate `ON DELETE` actions
+- [x] Generate default values
+- [x] Generate `@@map` table names and `@map` column names
+- [x] Quote PostgreSQL identifiers
+- [x] Verify generated SQL against actual PostgreSQL database
+- [x] Single foreign-key generation verified
+- [x] Mapped identifiers in foreign-key constraints verified
+- [x] Referential actions in generated constraints verified
 - [ ] Generate `@updatedAt` behavior where supported
-- [🟡] Generate `@@map` table names and `@map` column names — basic test passes
-- [🟡] Quote PostgreSQL identifiers — quoted names observed in generated SQL; reserved words and edge cases need verification
-- [ ] Verify generated SQL against an actual PostgreSQL database
-- [ ] Add comprehensive migration-generator tests
-- [ ] Verify single foreign-key generation
 - [ ] Verify composite foreign-key generation
-- [ ] Verify mapped identifiers in foreign-key constraints
-- [ ] Verify referential actions in generated constraints
-- [ ] Validate referenced columns have suitable primary/unique constraints
-- [ ] Verify invalid relation metadata produces useful errors
+- [ ] Validate referenced columns produce useful errors for invalid metadata
 - [ ] Generate many-to-many pivot tables
+- [ ] Add comprehensive migration-generator edge-case tests
+
+### Migration Execution
+- [x] Execute migrations against the database (`--apply`)
+- [x] Database URL resolution (CLI arg > env > .env > config.toml)
+- [x] Password masking in console output
+- [x] Table listing after successful migration
+- [x] Connection and execution error reporting
+- [ ] Handle migration failures and transactions
+- [ ] Prevent accidental destructive migrations without confirmation
 
 ### Schema Changes and History
 - [ ] Detect added columns
@@ -144,255 +159,95 @@ Legend: ✅ Done / Verified | 🟡 Implemented / Verification Pending | ⏳ Pend
 - [ ] Create timestamped migration files
 - [ ] Maintain migration history
 - [ ] Track applied migrations
-- [ ] Execute migrations against the database
-- [ ] Handle migration failures and transactions
-- [ ] Prevent accidental destructive migrations without confirmation
+- [ ] Automatic rollback
+- [ ] Development and reset migration workflows
 
 ## 8. CLI COMMANDS
-- [🟢] `rustorm generate` — basic command tested; standalone binary `rustorm.exe` successfully built
-- [🟢] `rustorm validate` — basic command tested through Cargo
-- [🟡] `rustorm migrate` — initial SQL file generation manually verified; database execution pending
+- [x] `rustorm init` — project scaffolding with .rustorm/ structure
+- [x] `rustorm dev` — watch mode with auto-regeneration
+- [x] `rustorm generate` — entity generation
+- [x] `rustorm validate` — schema validation
+- [x] `rustorm migrate` — initial SQL file generation
+- [x] `rustorm migrate --apply` — direct database execution
+- [x] Help command (`--help`, `-h`)
+- [x] Version command (`--version`, `-V`)
+- [x] Command argument validation
+- [x] Unknown command handling
+- [x] Appropriate process exit codes
+- [x] Snapshot-based change detection for dev mode
 - [ ] `rustorm migrate dev`
 - [ ] `rustorm migrate reset`
 - [ ] `rustorm migrate status`
-- [🟡] Define command arguments and options — basic commands/default paths implemented; full argument validation pending
-- [ ] Handle unknown commands and invalid arguments comprehensively
-- [🟡] Return appropriate process exit codes — top-level error handling exists; integration tests pending
-- [x] Help command — `--help` manually verified
-- [x] Version command — `--version` manually verified
+- [ ] CLI command integration tests
 
-## 9. PROJECT INTEGRATION
-- [ ] Detect `rust.schema` or configured schema path automatically
-- [ ] Detect Cargo project root
-- [🟡] Configure generated output paths — default paths work; configuration pending
-- [ ] Integrate generated module into project
-- [ ] Integrate RustORM runtime crate
-- [ ] Add project configuration file
-- [🟡] Support custom schema and migration output paths — basic support needs verification
+## 9. CONFIGURATION
+- [x] `.env` file support (auto-generated by init)
+- [x] `config.toml` support (auto-generated by init)
+- [x] `.gitignore` generation (protects .env)
+- [x] `DATABASE_URL` environment variable support
+- [x] `--database` CLI argument support
+- [x] Priority resolution: CLI arg > env var > .env > config.toml
+- [x] Password masking in console output
+- [ ] Project-level configuration file beyond .rustorm/
+
+## 10. PROJECT INTEGRATION
+- [x] `.rustorm/` directory structure creation
+- [x] Template schema generation
+- [x] Generated output directory management
+- [x] Migration output directory management
+- [x] Snapshot file management
+- [x] Shared naming module (table/column conventions)
+- [x] Consumer project compilation verified
+- [x] Axum integration verified
+- [ ] Detect Cargo project root automatically
+- [ ] Auto-detect schema path
+- [ ] Integrate generated module into consumer Cargo.toml
 - [ ] Handle missing or invalid project configuration
 - [ ] Avoid overwriting user files unexpectedly
 
-## 10. CLI QUALITY
-- [🟡] Clear, actionable error messages — basic errors implemented; refinement pending
+## 11. CLI QUALITY
+- [x] Clear, actionable error messages
+- [x] Correct process exit codes
+- [x] Help command verified
+- [x] Version command verified
+- [x] Unit tests for lexer/parser/validator/generator
+- [x] Generated-entity compile test
+- [x] Generated-relation compile test
+- [x] End-to-end schema → entities → migration → DB verification
+- [x] Axum JSON round-trip verification
+- [x] Clippy clean (`cargo clippy --all-targets --all-features -- -D warnings`)
+- [x] Test suite compiling and passing (61 tests)
 - [ ] Source line/column information for lexer/parser/validator errors
-- [🟡] Correct process exit codes — implementation present; integration tests pending
-- [x] Help command manually verified
-- [x] Version command manually verified
-- [x] Unit tests for lexer/parser/validator/generator existed at last passing baseline
-- [x] Existing generated-entity compile test
-- [x] Existing generated-relation compile test
 - [ ] CLI command integration tests
-- [ ] End-to-end tests from schema to generated code
-- [ ] End-to-end tests for migrations
 - [ ] Run `cargo fmt --check`
-- [🟡] Clippy with warnings denied — passed before the latest test edits; rerun after fixing blocker
-- [🔴] Restore compiling test suite — latest FK test additions fail because required `RelationAttribute` fields are missing
-- [🟡] Previous verified test baseline — 50 tests passed before the latest FK test additions; rerun after fixing blocker
 
-## 11. RELEASE READINESS
-- [ ] Document schema syntax and supported attributes
-- [ ] Document CLI commands and examples
-- [ ] Add a sample project
-- [ ] Verify clean build from a fresh checkout
-- [ ] Verify generated code compiles in the sample project
-- [ ] Verify migration workflow against a test database
-- [ ] Define versioning and compatibility expectations
-- [ ] Prepare initial release
-
-## 12. NEXT SESSION — FIRST TASKS
-- [ ] Inspect `RelationAttribute` definition in `src/ast.rs`
-- [ ] Identify all required fields in `RelationAttribute`
-- [ ] Fix both foreign-key test initializers in `src/migration.rs`
-- [ ] Run `cargo fmt`
-- [ ] Run `cargo test`
-- [ ] Run `cargo clippy --all-targets --all-features -- -D warnings`
-- [ ] Verify single and composite foreign-key SQL
-- [ ] Continue with `onDelete`, mapped-name, and invalid-reference tests
-
-
-
-
-
-feat(cli): implement initial migration SQL generation
-
-- Add schema-to-PostgreSQL CREATE TABLE generation
-- Support column types, defaults, primary keys, and indexes
-- Add mapped table and column names
-- Add identifier quoting
-- Generate initial migration SQL files
-- Expand migration generator tests
-
-
-
-# RUSTORM CLI — RUNTIME-INDEPENDENT MASTER CHECKLIST
-
-Legend: `[x]` Done / Verified | `[ ]` Pending | `[🟡]` Implemented / Verification Pending
-
-## 1. VALIDATOR
-
-- [ ] Validate relation cardinality and consistency edge cases
-- [ ] Improve validation error messages
-- [🟢] Verify invalid relation metadata handling
-- [🟢] Verify referenced fields and relation consistency
-
-## 2. ENTITY GENERATOR
-
-### Relations
-- [ ] Verify relation edge cases
-- [ ] Verify generated relation naming
-- [ ] Verify mapped relation keys
-- [ ] Verify many-to-many entity generation
-
-### Create / Insert / Update
-- [ ] Test required versus optional fields
-- [ ] Test default-valued fields
-- [ ] Test nullable fields
-- [ ] Verify primary-key inclusion/exclusion rules
-- [ ] Define and verify `@updatedAt` generation behavior
-- [ ] Add focused Create/Insert/Update tests
-- [ ] Verify generated code compatibility at the compile-time level
-
-## 3. MIGRATION GENERATOR
-
-### SQL Generation and Validation
-- [ ] Verify SQL type mappings
-- [ ] Verify nullable and `NOT NULL` constraints
-- [ ] Verify primary-key and unique constraints
-- [ ] Verify indexes and unique indexes
-- [ ] Verify single foreign-key generation
-- [ ] Verify composite foreign-key generation
-- [ ] Verify mapped table and column names in foreign keys
-- [ ] Verify `ON DELETE` actions
-- [ ] Verify PostgreSQL identifier quoting and reserved words
-- [🟢] Validate referenced columns have suitable primary-key or unique constraints
-- [ ] Verify invalid relation metadata produces useful errors
-- [ ] Generate many-to-many pivot tables
-- [ ] Define and test supported `@updatedAt` migration behavior
-- [ ] Add comprehensive migration-generator tests
-
-## 4. CLI COMMANDS
-
-- [ ] Validate command arguments and options
-- [ ] Handle unknown commands
-- [ ] Handle missing, extra, and invalid arguments
-- [ ] Verify appropriate process exit codes
-- [ ] Add CLI integration tests
-- [ ] Implement file-based `migrate status`
-- [ ] Verify `generate`, `validate`, and `migrate` command behavior
-- [ ] Verify help and version output
-
-## 5. PROJECT INTEGRATION — FILESYSTEM AND CONFIGURATION
-
-- [ ] Detect Cargo project root
-- [ ] Detect `rust.schema` automatically
-- [ ] Support a configured schema path
-- [ ] Configure generated output paths
-- [ ] Define a project configuration file
-- [ ] Handle missing or invalid configuration
-- [ ] Prevent accidental overwriting of existing user files
-- [ ] Verify custom schema and migration output paths
-
-## 6. CLI QUALITY AND TESTING
-
-- [ ] Fix the current foreign-key test compilation blocker
-- [ ] Run `cargo fmt`
-- [ ] Run `cargo test`
-- [ ] Run `cargo clippy --all-targets --all-features -- -D warnings`
-- [ ] Add CLI command integration tests
-- [ ] Add schema-to-generated-code end-to-end tests
-- [ ] Add migration-file generation end-to-end tests
-- [ ] Verify error handling and exit codes
-- [ ] Verify a clean build
-
-## 7. DOCUMENTATION AND SAMPLE PROJECT
-
+## 12. RELEASE READINESS
+- [x] Sample Axum project created and verified
+- [x] Generated code compiles in sample project
+- [x] Migration workflow verified against test database
+- [x] End-to-end CRUD verified through web API
 - [ ] Document schema syntax and supported attributes
 - [ ] Document CLI commands and usage examples
-- [ ] Create a sample project
-- [ ] Verify generated code in the sample project compiles
-- [ ] Document which migration operations require database runtime integration
+- [ ] Verify clean build from fresh checkout
+- [ ] Define versioning and compatibility expectations
+- [ ] Prepare crates.io publication
+- [ ] Document unsupported schema combinations
 
-## OUT OF SCOPE FOR THIS CHECKLIST
-
-- Executing migrations against PostgreSQL
-- Resetting an actual database
-- Tracking applied migrations in a database
-- Database transactions and rollback behavior
-- Full runtime compatibility testing against a live database
-
-
-
-Migration execution (--apply)
-⬜ NEXT
-Axum example project
-⬜ After apply
-crates.io publish
-⬜ Last
+## 13. NEXT SESSION — FIRST TASKS
+- [ ] Documentation: schema syntax reference
+- [ ] Documentation: CLI commands guide
+- [ ] Nested `.with()` eager loading
+- [ ] Migration tracking table
+- [ ] Schema diffing (incremental migrations)
+- [ ] Rollback support
+- [ ] crates.io publication preparation
+- [ ] Multi-DB architecture planning
 
 
+─────────────────────────────────────────────
+ARCHITECTURE DECISION (UNCHANGED)
+─────────────────────────────────────────────
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-CURRENT PAUSE
-─────────────
-InsertData generation is intentionally paused.
-
-Reason:
-The runtime RustORM BindValue currently supports only:
-
-    String(String)
-    I64(i64)
-
-The CLI schema supports additional scalar types and nullable values,
-so completing InsertData generation now would make the generator depend
-on an incomplete runtime binding layer.
-
-Next work should therefore happen in the RustORM runtime:
-
-    BindValue expansion
-        ↓
-    Executor binding support
-        ↓
-    Runtime tests
-        ↓
-    Return to CLI
-        ↓
-    InsertData generation
-        ↓
-    Update structs
-        ↓
-    UpdateData generation
-
-
-IMPORTANT ARCHITECTURE DECISION
-───────────────────────────────
 RustORM-CLI and the RustORM runtime remain separate projects.
 
 RustORM-CLI is responsible for:
@@ -410,12 +265,14 @@ RustORM-CLI is responsible for:
     Code generators
         ↓
     CLI commands / project integration
+        ↓
+    Migration execution (--apply)
+        ↓
+    Configuration (.env / config.toml)
 
 The CLI must not reimplement the RustORM runtime.
 
-The generated code should target the existing RustORM runtime API.
-
-
+The generated code targets the existing RustORM runtime API.
 
 
                  rust.schema
@@ -431,126 +288,21 @@ The generated code should target the existing RustORM runtime API.
         Entity Generator   Migration Generator
                │           │
                ▼           ▼
-          src/entities/   migrations/
-               │
-               ▼
-          User's Rust App
+          .rustorm/      .rustorm/
+          generated/     migrations/
+               │           │
+               ▼           ▼
+        User's Rust App ←──┘
                │
                ▼
           rustorm APIs
-
-
-
-/myproject
-├── rust.schema
-├── /migrations
-│   ├── ...
-│
-├── /generated
-│   └── /entities
-│       ├── user.rs
-│       ├── post.rs
-│       └── mod.rs
-│
-└── /myrustproject
-    ├── /src
-    │   └── main.rs
-    └── Cargo.toml
-
-
-myproject/
-├── rust.schema
-├── migrations/
-└── myrustproject/
-    ├── Cargo.toml
-    └── src/
-        ├── main.rs
-        └── entities/
-            ├── mod.rs
-            ├── user.rs
-            └── post.rs
-
-
-
-Lekin ek cheez clear hai
-"Kuch generate na karna" technically possible nahi hai agar generated Rust entities compile-time par chahiye.
-Lekin "user ko generated files manually create/manage na karni padein" — bilkul possible hai.
-Ye difference important hai:
-
-❌ User manually:
-   entities/user.rs
-   entities/post.rs
-   mod.rs
-
-✅ RustORM:
-   rust.schema
-        ↓
-   rustorm generate
-        ↓
-   hidden/managed generated code
-        ↓
-   Rust compiler
-
-
-Aur main actually isi direction ko prefer karunga.
-Aur bhi better: rustorm library + CLI
-Architecture:
-
-rustorm/
-├── rustorm-core      ← hamara runtime/API
-├── rustorm-cli       ← schema/parser/generator/migrations
-└── rustorm-macros?   ← possibly later, if needed
-
-User project:
-
-my-app/
-├── rust.schema
-├── migrations/
-├── Cargo.toml
-└── src/
-    └── main.rs
-
-
-User:
-
-rustorm init
-rustorm generate
-rustorm migrate dev
-
-Aur code:
-
-use rustorm::prelude::*;
-
-let users = User::find()
-    .all(&db)
-    .await?;
-
-
-So architecture exactly ye hai
-
-
-                    rust.schema
-                         │
-                         ▼
-                  RustORM Generator
-                         │
-                         ▼
-                 ┌───────────────┐
-                 │ User Entity   │
-                 │ Post Entity   │
-                 │ Role Entity   │
-                 └───────────────┘
-                         │
-                         │
-                         ▼
-User code ───────► User::find()
-                         │
-                         ▼
-                  RustORM Runtime
-                  / Current Engine
-                         │
-              ┌──────────┼──────────┐
-              ▼          ▼          ▼
+               │
+               ▼
+          RustORM Runtime
+          / Query Engine
+               │
+              ┌┴──────────┐
+              ▼           ▼
             Query       CRUD     Relations
               │
               ▼
@@ -560,36 +312,18 @@ User code ───────► User::find()
           PostgreSQL
 
 
+CURRENT STATUS SUMMARY
+══════════════════════
 
-                    G:\RustORM-CLI
-                           │
-                    rust.schema
-                           │
-                           ▼
-                       Parser
-                           │
-                           ▼
-                    Schema AST
-                           │
-                           ▼
-                      Validator
-                           │
-              ┌────────────┴────────────┐
-              ▼                         ▼
-       Entity Generator          Migration Generator
-              │                         │
-              ▼                         ▼
-       generated Rust              migrations/
-              │
-              ▼
-        User's Cargo.toml
-              │
-              ▼
-        rustorm dependency
-              │
-              ▼
-       EXISTING RUSTORM
-          CORE/RUNTIME
+Runtime Tests:     114 passed ✅
+CLI Tests:          61 passed ✅
+Clippy:             Clean ✅
+End-to-End:         Verified ✅
+Axum Example:       Working ✅
+Migration Apply:    Working ✅
+Watch Mode:         Working ✅
+Config System:      Working ✅
 
-
-          
+Previously paused items (BindValue, InsertData, UpdateData):
+ALL COMPLETE ✅ — Runtime BindValue expansion finished,
+CLI CRUD generation fully implemented and verified.

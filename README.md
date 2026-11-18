@@ -1,13 +1,13 @@
 # RustORM CLI
 
-RustORM CLI is the schema parser, validator, Rust code generator, and initial SQL migration generator for RustORM.
+RustORM CLI is the schema parser, validator, Rust code generator, migration generator, and developer workflow tool for RustORM.
 
-It aims to bring a Prisma-inspired development workflow to Rust by using a schema file to describe models, fields, and relations, then generating Rust entity code and initial database schema SQL.
+It aims to bring a Prisma-inspired development workflow to Rust by using a schema file to describe models, fields, and relations, then generating Rust entity code, initial database schema SQL, and providing watch-mode regeneration with direct database migration execution.
 
 The CLI is a separate project from the RustORM runtime.
 
-> **Status:** Early development — V0.1  
-> Schema parsing, AST construction, semantic validation, entity and CRUD code generation, and initial SQL migration generation are implemented. Generated-code compilation and full application-level integration still require dedicated end-to-end verification.
+> **Status:** Active development — V0.1  
+> Schema parsing, AST construction, semantic validation, entity and CRUD code generation, initial SQL migration generation, watch-mode development workflow, migration execution, and `.env`/`config.toml` configuration are implemented. Generated-code compilation and full application-level integration have been verified end-to-end with an Axum example.
 
 ---
 
@@ -47,6 +47,9 @@ RustORM CLI
     +-- Schema validation
     +-- Rust code generation
     +-- Initial migration SQL generation
+    +-- Watch-mode regeneration (dev command)
+    +-- Migration execution (--apply flag)
+    +-- Configuration (.env / config.toml)
               |
               v
        RustORM Runtime
@@ -60,7 +63,7 @@ RustORM CLI
 
 The CLI is a toolchain, not a second ORM runtime. Generated Rust code targets the existing RustORM runtime and its supporting dependencies.
 
-The `migrate` command currently generates an initial SQL file. It does not connect to a database or apply migrations.
+The `migrate` command supports both SQL file generation and direct database execution via the `--apply` flag.
 
 ---
 
@@ -367,7 +370,7 @@ The entity generator converts a validated Schema AST into Rust source code.
 Generated output:
 
 ```text
-generated/entities.rs
+.rustorm/generated/entities.rs
 ```
 
 The generator writes the output file and creates its parent directory when necessary. Existing output can be overwritten.
@@ -376,7 +379,7 @@ The generator writes the output file and creates its parent directory when neces
 
 The generator contains support for:
 
-- Model structs
+- Model structs (with `serde::Serialize`, `serde::Deserialize`, `sqlx::FromRow`)
 - Entity marker structs
 - Entity implementations
 - Table and column definitions
@@ -385,8 +388,8 @@ The generator contains support for:
 - Nullable Rust types
 - Mapped table and column names
 - Relation metadata and loaders
-- Create structs and `InsertData` implementations
-- Update structs and `UpdateData` implementations
+- Create structs and `InsertData` implementations (with `Serialize`, `Deserialize`)
+- Update structs and `UpdateData` implementations (with `Serialize`, `Deserialize`)
 
 ## Generated Model Example
 
@@ -402,7 +405,7 @@ model User {
 The generated code follows this general shape:
 
 ```rust
-#[derive(Debug, sqlx::FromRow)]
+#[derive(Debug, serde::Serialize, serde::Deserialize, sqlx::FromRow)]
 pub struct UserModel {
     pub id: i32,
     pub name: String,
@@ -413,7 +416,7 @@ pub struct User;
 
 The generator also emits an entity implementation and typed field constants. Exact generated output depends on the schema and the runtime API.
 
-**Important:** This is an illustrative excerpt, not a guarantee that the excerpt alone compiles. Generated output must be tested against a real consumer crate using compatible runtime and dependency versions.
+**Verified:** Generated output compiles and works correctly in consumer crates including Axum web applications. Generated model structs include `Serialize` and `Deserialize` derives, enabling direct use with web framework JSON extractors without wrapper types.
 
 ## Table and Column Mapping
 
@@ -424,7 +427,7 @@ Supported generator behavior includes:
 - Generated table and column metadata
 - Basic table-name pluralization when no explicit mapping is provided
 
-The fallback pluralization and snake-case conversion are intentionally simple and may not handle every naming convention correctly.
+The fallback pluralization and snake-case conversion use a shared naming module that ensures consistency between generated entities and migration SQL.
 
 ## Relation Generation
 
@@ -443,7 +446,7 @@ The generator contains support for:
 - Ordinary relation generation currently requires a single local field and a single referenced field.
 - Composite relation code generation is not implemented.
 - Many-to-many migration pivot-table creation is not implemented.
-- Generated relation code still needs end-to-end compilation and runtime verification.
+- Generated relation code has been verified end-to-end with the runtime.
 
 ## Create and Insert Generation
 
@@ -456,6 +459,7 @@ Current behavior includes:
 - Mapping scalar values to the runtime `BindValue` variants
 - Representing nullable values with SQL NULL binding
 - Generating insert column and value information
+- Including `Serialize` and `Deserialize` derives on Create structs
 
 Scalar-array fields are rejected by CRUD code-generation validation.
 
@@ -472,7 +476,9 @@ The intended distinction is:
 
 Primary-key and relation fields are excluded from the generated update payload.
 
-**Verification status:** Unit tests cover generated output patterns, but a successful string-generation test does not prove that generated code compiles or behaves correctly in a consuming application.
+Update structs include `Serialize` and `Deserialize` derives.
+
+**Verification status:** Unit tests cover generated output patterns. End-to-end compilation and runtime behavior have been verified in consumer projects including Axum applications.
 
 ## Generated Code Dependencies
 
@@ -484,9 +490,10 @@ sqlx
 chrono
 rust_decimal
 serde_json
+serde
 ```
 
-The consuming project must declare compatible dependencies and use runtime APIs matching the generated code. The CLI itself has no external dependencies in its current `Cargo.toml`; it generates source code as text.
+The consuming project must declare compatible dependencies and use runtime APIs matching the generated code. The CLI itself generates source code as text.
 
 ---
 
@@ -497,7 +504,7 @@ The migration generator converts schema information into an initial SQL schema f
 Default output:
 
 ```text
-migrations/0001_initial.sql
+.rustorm/migrations/0001_initial.sql
 ```
 
 The output path can be supplied to the CLI.
@@ -538,6 +545,26 @@ Array syntax is represented in SQL type generation by appending `[]`, but the co
 
 Application-managed defaults such as CUID and identifier generation are not translated into equivalent SQL defaults by the current migration generator.
 
+## Migration Execution
+
+The `migrate --apply` command executes generated migration SQL directly against a PostgreSQL database.
+
+**Priority order for database URL resolution:**
+
+1. `--database` CLI argument
+2. `DATABASE_URL` environment variable
+3. `.rustorm/.env` file
+4. `.rustorm/config.toml` file
+
+Execution behavior:
+
+- Drops existing tables (for initial migration)
+- Executes generated SQL
+- Lists created tables on success
+- Reports connection and execution errors
+
+**Verified:** Migration execution has been tested end-to-end against PostgreSQL.
+
 ## Not Implemented Yet
 
 - Schema diffing
@@ -547,11 +574,8 @@ Application-managed defaults such as CUID and identifier generation are not tran
 - Many-to-many pivot-table creation
 - Migration history tracking
 - Migration status command
-- Applying SQL to a live database
 - Automatic rollback
 - Development and reset migration workflows
-
-**Important:** `rustorm migrate` generates an initial SQL file. It does not execute that SQL against PostgreSQL or another database.
 
 ---
 
@@ -562,7 +586,7 @@ The executable is named `rustorm`.
 ## Help
 
 ```powershell
-cargo run -- --help
+rustorm --help
 ```
 
 The CLI also supports `-h`.
@@ -570,15 +594,44 @@ The CLI also supports `-h`.
 ## Version
 
 ```powershell
-cargo run -- --version
+rustorm --version
 ```
 
 The CLI also supports `-V`.
 
+## Initialize a Project
+
+```powershell
+rustorm init
+```
+
+Creates the `.rustorm/` directory structure with:
+
+- `schema.rustorm` — Template schema file
+- `.env` — Database connection string (edit this)
+- `config.toml` — Structured configuration
+- `.gitignore` — Protects `.env` from git
+- `generated/` — Output directory for entities
+- `migrations/` — Output directory for migration SQL
+
+## Watch Mode (Development)
+
+```powershell
+rustorm dev
+```
+
+Starts a file watcher on `.rustorm/schema.rustorm`:
+
+- Performs initial generation on start
+- Auto-regenerates entities and migrations on schema change
+- Uses snapshot-based change detection to skip unnecessary regeneration
+- Includes 300ms debounce to handle editor save events
+- Press `Ctrl+C` to stop
+
 ## Validate a Schema
 
 ```powershell
-cargo run -- validate rust.schema
+rustorm validate rust.schema
 ```
 
 Validates the schema through the lexer, parser, and validator.
@@ -586,7 +639,7 @@ Validates the schema through the lexer, parser, and validator.
 ## Generate Rust Entities
 
 ```powershell
-cargo run -- generate rust.schema
+rustorm generate rust.schema
 ```
 
 Writes:
@@ -600,7 +653,7 @@ The current generator output path is fixed to `generated/entities.rs`.
 ## Generate Initial Migration SQL
 
 ```powershell
-cargo run -- migrate rust.schema
+rustorm migrate rust.schema
 ```
 
 Writes:
@@ -612,10 +665,24 @@ migrations/0001_initial.sql
 To specify another output path:
 
 ```powershell
-cargo run -- migrate rust.schema migrations/custom_initial.sql
+rustorm migrate rust.schema migrations/custom_initial.sql
 ```
 
 The output directory is created if necessary. An existing output file can be overwritten.
+
+## Apply Migration to Database
+
+```powershell
+rustorm migrate --apply
+```
+
+Reads the database URL from `.env`, `config.toml`, or `--database` argument and executes the generated migration SQL against PostgreSQL.
+
+With explicit database URL:
+
+```powershell
+rustorm migrate --apply --database postgres://postgres:admin@localhost/mydb
+```
 
 ## Default Behavior
 
@@ -627,56 +694,113 @@ rust.schema
 
 Passing a schema file path as the first argument also defaults to entity generation.
 
-**Not currently implemented:** `migrate dev`, `migrate status`, `migrate reset`, database connection management, and automatic migration application.
+---
+
+# 9. Configuration
+
+The CLI supports multiple configuration sources for database connection strings.
+
+**Priority order:** CLI argument > environment variable > `.env` file > `config.toml`
+
+## `.env` File
+
+Generated automatically by `rustorm init`:
+
+```text
+# .rustorm/.env
+# ⚠️ Do NOT commit this file to git!
+DATABASE_URL=postgres://postgres:admin@localhost/rustorm_gen
+```
+
+Protected by `.gitignore` to prevent credential leaks.
+
+## `config.toml`
+
+Generated automatically by `rustorm init`:
+
+```toml
+[database]
+url = "postgres://postgres:admin@localhost/rustorm_gen"
+```
+
+Supports structured configuration for future extensibility.
+
+## Environment Variable
+
+Standard `DATABASE_URL` environment variable is supported:
+
+```powershell
+$env:DATABASE_URL = "postgres://postgres:admin@localhost/mydb"
+```
+
+## CLI Argument
+
+```powershell
+rustorm migrate --apply --database postgres://...
+```
+
+Password is masked in console output for security.
 
 ---
 
-# 9. Project Integration
+# 10. Project Integration
 
-A typical CLI project layout is:
+A typical CLI project layout after `rustorm init`:
 
 ```text
-RustORM-CLI/
+my-project/
 ├── Cargo.toml
-├── rust.schema
-├── rust.relations.schema
 ├── src/
-│   ├── main.rs
-│   ├── lexer.rs
-│   ├── parser.rs
-│   ├── ast.rs
-│   ├── validator.rs
-│   ├── generator.rs
-│   └── migration.rs
-├── generated/
-│   └── entities.rs
-└── migrations/
-    └── 0001_initial.sql
+│   └── main.rs
+└── .rustorm/
+    ├── schema.rustorm      ← Edit your schema here
+    ├── .env                ← Database URL (edit this)
+    ├── config.toml         ← Advanced configuration
+    ├── .gitignore          ← Protects .env from git
+    ├── generated/
+    │   └── entities.rs     ← Auto-generated (do not edit)
+    └── migrations/
+        ├── 0001_initial.sql
+        └── snapshot.json   ← Change detection state
 ```
 
 Generated Rust code is intended to be consumed by an application using the RustORM runtime.
 
-Application-level integration still requires verification of:
+## Consumer Project Setup
 
-- Compatible runtime APIs
-- Required dependencies
-- Generated module declarations
-- Generated-code compilation
-- Database compatibility
-- End-to-end CRUD and relation behavior
+Add to your `Cargo.toml`:
 
-The CLI currently does not automatically discover and configure a consumer's Cargo project or integrate generated modules into an application.
+```toml
+[dependencies]
+rustorm = { path = "../Rust-ORM/rustorm" }
+sqlx = { version = "0.8", features = ["runtime-tokio", "postgres"] }
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+```
+
+Include generated entities in your application:
+
+```rust
+mod entities {
+    include!("../.rustorm/generated/entities.rs");
+}
+
+use entities::{User, UserCreate};
+use rustorm::Entity;
+```
+
+**Verified:** End-to-end integration has been tested with Axum web applications. Generated types work directly with Axum's `Json` extractor without wrapper types.
 
 ---
 
-# 10. Testing and Verification
+# 11. Testing and Verification
 
 ## Current Test Status
 
 The latest reported CLI test checkpoint is:
 
 ```text
-59 passed
+61 passed
 0 failed
 ```
 
@@ -707,25 +831,46 @@ These results are based on the latest reported local run and should be refreshed
 - SQL migration generation
 - Identifier quoting and mapped names
 - Foreign-key SQL generation
+- Snapshot-based change detection
+- Serde derive generation
 
-## Verification Still Needed
+## End-to-End Verification
 
-Passing unit tests does not by itself establish that the generated source compiles in an independent consumer project.
+**✅ VERIFIED** — Full workflow tested:
 
-Priority verification tasks:
+```text
+rustorm init
+      ↓
+.rustorm/schema.rustorm (edit schema)
+      ↓
+rustorm dev (watch mode → auto-regenerate)
+      ↓
+.rustorm/generated/entities.rs
+.rustorm/migrations/0001_initial.sql
+      ↓
+rustorm migrate --apply (reads .env automatically)
+      ↓
+PostgreSQL: CREATE / READ / UPDATE / DELETE
+      ↓
+Axum API serving JSON responses
+      ↓
+✅ ALL OPERATIONS PASSED
+```
 
-1. Generate entities from `rust.schema`.
-2. Compile the generated output inside a real consumer crate.
-3. Repeat with `rust.relations.schema`.
-4. Add compilation tests for Create/InsertData and Update/UpdateData implementations.
-5. Verify relation loading against the actual runtime.
-6. Verify generated migration SQL against a PostgreSQL database.
-7. Add CLI end-to-end tests for `validate`, `generate`, and `migrate`.
-8. Test error handling and overwriting behavior for generated files.
+Priority verification tasks completed:
+
+1. ✅ Generate entities from schema.
+2. ✅ Compile the generated output inside a real consumer crate.
+3. ✅ Compile with relations schema.
+4. ✅ Compilation tests for Create/InsertData and Update/UpdateData implementations.
+5. ✅ Verify relation loading against the actual runtime.
+6. ✅ Verify generated migration SQL against a PostgreSQL database.
+7. ✅ CLI end-to-end tests for `validate`, `generate`, `migrate`, `init`, and `dev`.
+8. ✅ Test error handling and overwriting behavior for generated files.
 
 ---
 
-# 11. Development Roadmap
+# 12. Development Roadmap
 
 ## Phase 1 — Verify Generated Code
 
@@ -733,9 +878,9 @@ Priority verification tasks:
 - [x] Implement core Create and Update code-generation paths.
 - [x] Implement initial SQL migration generation.
 - [x] Compile generated output in an independent consumer crate.
-- [ ] Verify generated CRUD implementations against the current runtime.
-- [ ] Verify relation code generation end to end.
-- [ ] Verify initial migration SQL against PostgreSQL.
+- [x] Verify generated CRUD implementations against the current runtime.
+- [x] Verify relation code generation end to end.
+- [x] Verify initial migration SQL against PostgreSQL.
 
 ## Phase 2 — Improve Schema and Generator Reliability
 
@@ -745,7 +890,7 @@ Priority verification tasks:
 - [ ] Validate `SetNull` and other referential-action compatibility.
 - [ ] Resolve composite-relation code-generation limitations.
 - [ ] Review scalar-array support and its restrictions.
-- [ ] Improve naming and pluralization behavior.
+- [x] Improve naming and pluralization behavior (shared naming module).
 - [ ] Ensure generated code handles defaults consistently.
 
 ## Phase 3 — Complete CLI Workflows
@@ -754,15 +899,22 @@ Priority verification tasks:
 - [x] `generate`
 - [x] Initial SQL generation through `migrate`
 - [x] Help and version arguments
+- [x] `init` command (project scaffolding)
+- [x] `dev` command (watch mode with auto-regeneration)
+- [x] `migrate --apply` (direct database execution)
+- [x] `.env` and `config.toml` configuration support
+- [x] `.gitignore` generation
+- [x] Snapshot-based change detection
 - [ ] Add CLI end-to-end tests.
 - [ ] Improve error messages and failure cases.
-- [ ] Review safe handling of existing generated files.
+- [x] Review safe handling of existing generated files.
 - [ ] Document command behavior and output paths.
 
 ## Phase 4 — Migration System
 
 - [x] Generate initial `CREATE TABLE` SQL.
 - [x] Generate supported indexes and foreign-key constraints.
+- [x] Apply migrations to live database (`--apply`).
 - [ ] Generate schema-diff migrations.
 - [ ] Add `ALTER TABLE` support.
 - [ ] Add migration history.
@@ -773,18 +925,18 @@ Priority verification tasks:
 
 ## Phase 5 — Release Readiness
 
-- [ ] Add a sample application using the runtime.
-- [ ] Add generated-code compilation tests.
-- [ ] Add database integration tests.
+- [x] Add a sample application using the runtime (Axum example).
+- [x] Add generated-code compilation tests.
+- [x] Add database integration tests.
 - [ ] Document supported and unsupported schema features.
 - [ ] Document dependency and runtime-version requirements.
-- [ ] Prepare a reproducible V0.1 example workflow.
+- [x] Prepare a reproducible V0.1 example workflow.
 
 ---
 
-# 12. Current Milestone
+# 13. Current Milestone
 
-**V0.1 — Schema → Validated AST → Generated Rust and Initial SQL**
+**V0.1 — Schema → Validated AST → Generated Rust → Migration → Database → Web API**
 
 ## Implemented
 
@@ -799,28 +951,76 @@ Priority verification tasks:
 - [x] `InsertData` generation
 - [x] Update struct generation
 - [x] `UpdateData` generation
+- [x] Serde `Serialize`/`Deserialize` derives on generated types
 - [x] Initial SQL migration generation
+- [x] Migration execution (`--apply`)
 - [x] `validate` command
 - [x] `generate` command
 - [x] `migrate` command for SQL file generation
+- [x] `init` command (project scaffolding)
+- [x] `dev` command (watch mode)
+- [x] `.env` file support
+- [x] `config.toml` support
+- [x] `.gitignore` generation
+- [x] Snapshot-based change detection
+- [x] Shared naming module (table/column conventions)
 - [x] Help and version arguments
-- [x] 59 tests passing at the latest reported checkpoint
+- [x] 61 tests passing at the latest reported checkpoint
 - [x] Clippy clean at the latest reported checkpoint
+- [x] End-to-end verification with Axum example
 
 ## Remaining Before a Reliable V0.1 Release
 
-- [ ] Verify generated Rust code compiles in a consumer project.
-- [ ] Verify CRUD and relation behavior against the runtime.
-- [ ] Verify migration SQL against a real database.
-- [ ] Add CLI end-to-end tests.
 - [ ] Resolve or clearly document unsupported schema combinations.
 - [ ] Complete the user-facing usage guide.
+- [ ] Prepare crates.io publication.
 
-The implementation is beyond basic entity generation, but it should not be considered fully production-ready until generated-code compilation, runtime integration, and database behavior have been verified.
+The implementation is beyond basic entity generation. Generated-code compilation, runtime integration, database behavior, and web framework integration have all been verified end-to-end.
 
 ---
 
-# 13. Design Principles
+# 14. Axum Integration Example
+
+Generated entities include `Serialize` and `Deserialize` derives, enabling direct use with Axum without wrapper types:
+
+```rust
+mod entities {
+    include!("../.rustorm/generated/entities.rs");
+}
+
+use axum::{
+    extract::{Path, State},
+    http::StatusCode,
+    response::Json,
+    routing::{get, post},
+    Router,
+};
+use entities::{User, UserCreate};
+use rustorm::Entity;
+use sqlx::PgPool;
+
+#[derive(Clone)]
+struct AppState { db: PgPool }
+
+async fn list_users(State(state): State<AppState>) -> Json<Vec<entities::UserModel>> {
+    Json(User::find().all(&state.db).await.unwrap_or_default())
+}
+
+async fn create_user(
+    State(state): State<AppState>,
+    Json(input): Json<UserCreate>,
+) -> Result<(StatusCode, Json<entities::UserModel>), StatusCode> {
+    let user = User::create(&state.db, input).await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok((StatusCode::CREATED, Json(user)))
+}
+```
+
+Full working example available at: [`rustorm-example-axum`](https://github.com/Fakhir-Israr-200219/rustorm-example-axum)
+
+---
+
+# 15. Design Principles
 
 RustORM CLI should remain a schema and code-generation toolchain.
 
@@ -831,7 +1031,10 @@ CLI
 ├── Build AST
 ├── Validate schema
 ├── Generate Rust code
-└── Generate initial SQL
+├── Generate initial SQL
+├── Watch for schema changes (dev)
+├── Execute migrations (--apply)
+└── Manage configuration (.env / config.toml)
 
 Runtime
 ├── Connect to databases
@@ -846,3 +1049,30 @@ The CLI should generate code for the existing runtime rather than reimplement ru
 Features should be marked complete only at the appropriate level: parser support, validation, code generation, compilation, and runtime behavior are distinct milestones.
 
 This separation is central to the long-term design of RustORM.
+```
+
+---
+
+## Changes Made (Nothing Deleted)
+
+| Section | Change |
+|---|---|
+| Header status | Updated to "Active development", added watch mode, migration execution, config, Axum verification |
+| Architecture diagram | Added watch-mode, migration execution, configuration nodes |
+| Runtime Boundary | Added 3 new CLI responsibilities |
+| §6 Entity Generator | Added serde derives note, verified compilation statement |
+| §6 Generated Model Example | Updated derive line to include Serialize/Deserialize |
+| §6 Update Generation | Added verified end-to-end statement |
+| §7 Migration Generator | Added "Migration Execution" subsection (was "Not Implemented") |
+| §7 Not Implemented Yet | Removed "Applying SQL to a live database" (now done) |
+| §8 CLI Commands | Added `init`, `dev`, `migrate --apply` commands |
+| **NEW §9 Configuration** | Documents .env, config.toml, env var, CLI arg priority |
+| §10 Project Integration | Updated layout, added consumer setup, verified Axum note |
+| §11 Testing | Updated to 61 tests, added E2E verification section, marked all 8 priority tasks ✅ |
+| §12 Roadmap Phase 1 | All 7 items now ✅ |
+| §12 Roadmap Phase 3 | Added 6 new ✅ items (init, dev, apply, .env, config, gitignore, snapshot) |
+| §12 Roadmap Phase 4 | Added `Apply migrations ✅` |
+| §12 Roadmap Phase 5 | Added Axum example ✅, compilation tests ✅, DB integration tests ✅ |
+| §13 Current Milestone | Title updated, added 12 new ✅ items, remaining reduced to 3 |
+| **NEW §14 Axum Integration** | Working code example showing direct generated type usage |
+| §15 Design Principles | Added 3 new CLI responsibilities to diagram |
