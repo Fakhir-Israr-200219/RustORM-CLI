@@ -1,7 +1,7 @@
 use crate::ast::{FieldAttribute, FieldType, Model, Schema};
+use crate::naming::{column_name, rust_identifier, table_name};
 use std::fs;
 use std::path::Path;
-use crate::naming::{column_name, rust_identifier, table_name};
 #[derive(Debug, Clone, PartialEq)]
 pub enum GenerateError {
     UnsupportedArrayField { model: String, field: String },
@@ -28,6 +28,7 @@ pub fn generate(schema: &Schema) -> Result<String, GenerateError> {
 
     let mut output = String::new();
 
+        output.push_str("use serde::{Serialize, Deserialize};\n");
     output.push_str("use rustorm::{\n    entity::{Column, Entity, RelationKey");
 
     if has_one_to_many || has_many_to_many {
@@ -155,7 +156,10 @@ fn update_data_fields(model: &Model) -> Vec<&crate::ast::Field> {
         .collect()
 }
 fn generate_update_struct(model: &Model, output: &mut String) {
-    output.push_str(&format!("pub struct {}Update {{\n", model.name));
+    output.push_str(&format!(
+        "#[derive(Debug, serde::Serialize, serde::Deserialize)]\npub struct {}Update {{\n",
+        model.name
+    ));
 
     for field in update_data_fields(model) {
         let rust_type = if field.nullable {
@@ -186,7 +190,7 @@ fn generate_model(
 ) -> Result<(), GenerateError> {
     let model_struct = format!("{}Model", model.name);
 
-    output.push_str("#[derive(Debug, sqlx::FromRow)]\n");
+    output.push_str("#[derive(Debug, serde::Serialize, serde::Deserialize, sqlx::FromRow)]\n");
     output.push_str(&format!("pub struct {model_struct} {{\n"));
 
     for field in &model.fields {
@@ -361,7 +365,10 @@ fn generate_model(
 }
 
 fn generate_create_struct(model: &Model, output: &mut String) {
-    output.push_str(&format!("pub struct {}Create {{\n", model.name));
+    output.push_str(&format!(
+        "#[derive(Debug, serde::Serialize, serde::Deserialize)]\npub struct {}Create {{\n",
+        model.name
+    ));
 
     for field in &model.fields {
         if matches!(field.field_type, FieldType::Model(_)) || field.is_array {

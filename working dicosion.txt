@@ -322,7 +322,12 @@ Legend: `[x]` Done / Verified | `[ ]` Pending | `[🟡]` Implemented / Verificat
 
 
 
-
+Migration execution (--apply)
+⬜ NEXT
+Axum example project
+⬜ After apply
+crates.io publish
+⬜ Last
 
 
 
