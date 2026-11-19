@@ -1,16 +1,16 @@
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Schema {
     pub models: Vec<Model>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Model {
     pub name: String,
     pub fields: Vec<Field>,
     pub attributes: Vec<ModelAttribute>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Field {
     pub name: String,
     pub field_type: FieldType,
@@ -19,7 +19,7 @@ pub struct Field {
     pub attributes: Vec<FieldAttribute>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum FieldType {
     Int,
     String,
@@ -31,7 +31,7 @@ pub enum FieldType {
     Model(String),
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum FieldAttribute {
     Id,
     Unique,
@@ -41,7 +41,7 @@ pub enum FieldAttribute {
     Relation(RelationAttribute),
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum DefaultValue {
     AutoIncrement,
     Now,
@@ -53,7 +53,7 @@ pub enum DefaultValue {
     Identifier(String),
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct RelationAttribute {
     pub name: Option<String>,
     pub fields: Vec<String>,
@@ -64,7 +64,7 @@ pub struct RelationAttribute {
     pub on_delete: Option<ReferentialAction>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum ReferentialAction {
     Cascade,
     Restrict,
@@ -72,7 +72,7 @@ pub enum ReferentialAction {
     NoAction,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum ModelAttribute {
     Map(String),
     Index(Vec<String>),

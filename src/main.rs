@@ -5,6 +5,7 @@ mod migration;
 mod naming;
 mod parser;
 mod validator;
+use crate::ast::Schema;
 use notify::Watcher;
 use std::{env, fs, path::Path, process};
 
@@ -76,9 +77,56 @@ fn run_generation(
     println!("  ✅ Generated: .rustorm/migrations/0001_initial.sql");
 
     // Save snapshot
-    fs::write(snapshot_path, &current_content)
-        .map_err(|e| format!("Failed to save snapshot: {e}"))?;
+    // Load old snapshot for diffing
+    let old_snapshot_exists = snapshot_path.exists();
+    let old_snapshot: Option<Schema> = if old_snapshot_exists {
+        let snap_content = fs::read_to_string(&snapshot_path)
+            .ok()
+            .and_then(|s| serde_json::from_str(&s).ok());
+        snap_content
+    } else {
+        None
+    };
 
+    // Generate diff if old snapshot exists
+    if let Some(ref old_snap) = old_snapshot {
+        match migration::diff_schema(old_snap, &schema) {
+            Ok(diff_sql) => {
+                if !diff_sql.trim().is_empty() {
+                    // Find next migration number
+                    let mut next_num = 1u32;
+                    if let Ok(entries) = fs::read_dir(&migrations_dir) {
+                        for entry in entries.flatten() {
+                            if let Some(name) = entry.file_name().to_str() {
+                                if name.ends_with(".sql") {
+                                    if let Some(num_str) = name.split('_').next() {
+                                        if let Ok(n) = num_str.parse::<u32>() {
+                                            next_num = next_num.max(n + 1);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    let diff_filename = format!("{:04}_schema_update.sql", next_num);
+                    let diff_path = migrations_dir.join(&diff_filename);
+                    fs::write(&diff_path, &diff_sql)
+                        .map_err(|e| format!("Failed to write diff migration: {e}"))?;
+                    println!("  🔄 Schema change detected! Generated: {}", diff_filename);
+                }
+            }
+            Err(e) => {
+                println!("  ⚠️  Diff generation failed: {e}");
+            }
+        }
+    }
+
+    // Save new snapshot
+    let snapshot_json = serde_json::to_string_pretty(&schema)
+        .map_err(|e| format!("Failed to serialize snapshot: {e}"))?;
+    fs::write(&snapshot_path, &snapshot_json)
+        .map_err(|e| format!("Failed to write snapshot: {e}"))?;
     println!("  💾 Snapshot saved");
 
     Ok(())
@@ -246,7 +294,6 @@ fn run() -> Result<(), String> {
             let has_apply = args.iter().any(|a| a == "--apply");
 
             if has_apply {
-                // Apply mode: execute migration against database
                 let db_url_owned = if let Some(pos) = args.iter().position(|a| a == "--database") {
                     args.get(pos + 1)
                         .ok_or("--database requires a connection string")?
@@ -267,23 +314,9 @@ fn run() -> Result<(), String> {
                     .map(|p| p.join("migrations"))
                     .unwrap_or_else(|| Path::new(".rustorm/migrations").to_path_buf());
 
-                let migration_file = migrations_dir.join("0001_initial.sql");
-
-                if !migration_file.exists() {
-                    return Err(format!(
-                        "Migration file not found: {}. Run 'rustorm dev' first.",
-                        migration_file.display()
-                    ));
-                }
-
-                let sql = fs::read_to_string(&migration_file)
-                    .map_err(|e| format!("Failed to read migration: {e}"))?;
-
-                println!("🚀 Applying migration to database...");
+                println!("🚀 Applying migrations to database...");
                 println!("   Database: {}", mask_database_url(db_url));
-                println!("   File: {}\n", migration_file.display());
 
-                // Execute using tokio runtime
                 let rt = tokio::runtime::Runtime::new()
                     .map_err(|e| format!("Failed to create async runtime: {e}"))?;
 
@@ -292,22 +325,7 @@ fn run() -> Result<(), String> {
                         .await
                         .map_err(|e| format!("Failed to connect to database: {e}"))?;
 
-                    // Drop existing tables first (for initial migration)
-                    // In future, this will be smarter with migration tracking
-                    // Calculate checksum of current migration
-                    use std::collections::hash_map::DefaultHasher;
-                    use std::hash::{Hash, Hasher};
-
-                    let mut hasher = DefaultHasher::new();
-                    sql.hash(&mut hasher);
-                    let checksum = format!("{:x}", hasher.finish());
-
-                    let migration_name = migration_file
-                        .file_name()
-                        .and_then(|n| n.to_str())
-                        .unwrap_or("0001_initial.sql");
-
-                    // Ensure tracking table exists before checking history
+                    // Ensure tracking table exists
                     sqlx::raw_sql(
                         "CREATE TABLE IF NOT EXISTS _rustorm_migrations (\n\
                              id SERIAL PRIMARY KEY,\n\
@@ -320,65 +338,91 @@ fn run() -> Result<(), String> {
                     .await
                     .map_err(|e| format!("Failed to create migration tracking table: {e}"))?;
 
-                    // Check if already applied
-                    let existing: Option<(String,)> =
-                        sqlx::query_as("SELECT checksum FROM _rustorm_migrations WHERE name = $1")
-                            .bind(migration_name)
-                            .fetch_optional(&pool)
-                            .await
-                            .map_err(|e| format!("Failed to check migration history: {e}"))?;
+                    // Collect all .sql files sorted by name
+                    let mut migration_files: Vec<_> = fs::read_dir(&migrations_dir)
+                        .map_err(|e| format!("Failed to read migrations dir: {e}"))?
+                        .filter_map(|entry| entry.ok())
+                        .filter(|entry| {
+                            entry.path().extension()
+                                .map(|ext| ext == "sql")
+                                .unwrap_or(false)
+                        })
+                        .collect();
 
-                    if let Some((existing_checksum,)) = existing {
-                        if existing_checksum == checksum {
-                            println!(
-                                "⏭️  Migration '{}' already applied (checksum match). Skipping.",
-                                migration_name
-                            );
-                            pool.close().await;
-                            return Ok::<(), String>(());
-                        } else {
-                            return Err(format!(
-                                "❌ Schema drift detected!\n\
-                                 Migration '{}' was previously applied with a different checksum.\n\
-                                 Old: {}\n\
-                                 New: {}\n\n\
-                                 This means the schema file was modified after migration.\n\
-                                 Options:\n\
-                                   1. Revert schema changes to match applied migration\n\
-                                   2. Reset database and re-apply\n\
-                                   3. Create a new migration for the changes",
-                                migration_name, existing_checksum, checksum
-                            ));
-                        }
+                    migration_files.sort_by_key(|e| e.file_name());
+
+                    if migration_files.is_empty() {
+                        return Err("No migration files found in .rustorm/migrations/. Run 'rustorm dev' first.".into());
                     }
 
-                    // Execute migration SQL
-                    println!("📝 Applying migration: {}", migration_name);
-                    sqlx::raw_sql(&sql)
-                        .execute(&pool)
-                        .await
-                        .map_err(|e| format!("Failed to apply migration: {e}"))?;
+                    println!("📋 Found {} migration file(s)\n", migration_files.len());
 
-                    // Record migration
-                    sqlx::query("INSERT INTO _rustorm_migrations (name, checksum) VALUES ($1, $2)")
+                    for migration_entry in &migration_files {
+                        let migration_path = migration_entry.path();
+                        let migration_name = migration_path.file_name()
+                            .and_then(|n| n.to_str())
+                            .unwrap_or("unknown");
+
+                        let sql = fs::read_to_string(&migration_path)
+                            .map_err(|e| format!("Failed to read {}: {e}", migration_name))?;
+
+                        // Calculate checksum
+                        use std::collections::hash_map::DefaultHasher;
+                        use std::hash::{Hash, Hasher};
+                        let mut hasher = DefaultHasher::new();
+                        sql.hash(&mut hasher);
+                        let checksum = format!("{:x}", hasher.finish());
+
+                        // Check if already applied
+                        let existing: Option<(String,)> = sqlx::query_as(
+                            "SELECT checksum FROM _rustorm_migrations WHERE name = $1"
+                        )
+                        .bind(migration_name)
+                        .fetch_optional(&pool)
+                        .await
+                        .map_err(|e| format!("Failed to check migration history: {e}"))?;
+
+                        if let Some((existing_checksum,)) = existing {
+                            if existing_checksum == checksum {
+                                println!("⏭️  {} already applied. Skipping.", migration_name);
+                                continue;
+                            } else {
+                                return Err(format!(
+                                    "❌ Schema drift in '{}'! Checksum mismatch.\nOld: {}\nNew: {}",
+                                    migration_name, existing_checksum, checksum
+                                ));
+                            }
+                        }
+
+                        // Apply migration
+                        println!("📝 Applying: {}", migration_name);
+                        sqlx::raw_sql(&sql)
+                            .execute(&pool)
+                            .await
+                            .map_err(|e| format!("Failed to apply {}: {e}", migration_name))?;
+
+                        // Record in tracking table
+                        sqlx::query(
+                            "INSERT INTO _rustorm_migrations (name, checksum) VALUES ($1, $2)"
+                        )
                         .bind(migration_name)
                         .bind(&checksum)
                         .execute(&pool)
                         .await
-                        .map_err(|e| format!("Failed to record migration: {e}"))?;
+                        .map_err(|e| format!("Failed to record {}: {e}", migration_name))?;
 
-                    println!("💾 Migration recorded in _rustorm_migrations");
+                        println!("✅ {} applied successfully!", migration_name);
+                    }
 
                     // List created tables
                     let tables: Vec<(String,)> = sqlx::query_as(
-                "SELECT tablename FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename"
-            )
-            .fetch_all(&pool)
-            .await
-            .map_err(|e| format!("Failed to list tables: {e}"))?;
+                        "SELECT tablename FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename"
+                    )
+                    .fetch_all(&pool)
+                    .await
+                    .map_err(|e| format!("Failed to list tables: {e}"))?;
 
-                    println!("✅ Migration applied successfully!\n");
-                    println!("Tables created:");
+                    println!("\nTables in database:");
                     for (table,) in &tables {
                         println!("  📋 {table}");
                     }

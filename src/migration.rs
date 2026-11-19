@@ -337,6 +337,69 @@ fn quote_identifier(name: &str) -> String {
     format!("\"{}\"", name.replace('"', "\"\""))
 }
 
+pub fn diff_schema(old_snapshot: &Schema, new_schema: &Schema) -> Result<String, String> {
+    let mut sql = String::new();
+
+    // Collect old and new table names
+    let old_tables: std::collections::HashSet<&str> = old_snapshot.models.iter().map(|m| m.name.as_str()).collect();
+    let new_tables: std::collections::HashSet<&str> = new_schema.models.iter().map(|m| m.name.as_str()).collect();
+
+    // Detect new tables (will be handled by normal CREATE TABLE generation)
+    for model in &new_schema.models {
+        if !old_tables.contains(model.name.as_str()) {
+            writeln!(sql, "-- New table detected: {}", table_name(model)).unwrap();
+        }
+    }
+
+    // Detect dropped tables
+    for old_model in &old_snapshot.models {
+        if !new_tables.contains(old_model.name.as_str()) {
+            writeln!(sql, "DROP TABLE IF EXISTS {} CASCADE;", quote_identifier(&table_name(old_model))).unwrap();
+        }
+    }
+
+    // Detect column changes in existing tables
+    for new_model in &new_schema.models {
+        let Some(old_model) = old_snapshot.models.iter().find(|m| m.name == new_model.name) else {
+            continue; // New table, skip here
+        };
+
+        let tbl = quote_identifier(&table_name(new_model));
+
+        let old_fields: std::collections::HashSet<&str> = old_model.fields.iter()
+            .filter(|f| !matches!(f.field_type, FieldType::Model(_)))
+            .map(|f| f.name.as_str())
+            .collect();
+
+        let new_fields: std::collections::HashSet<&str> = new_model.fields.iter()
+            .filter(|f| !matches!(f.field_type, FieldType::Model(_)))
+            .map(|f| f.name.as_str())
+            .collect();
+
+        // Added columns
+        for field in &new_model.fields {
+            if matches!(field.field_type, FieldType::Model(_)) { continue; }
+            if !old_fields.contains(field.name.as_str()) {
+                let col = quote_identifier(&column_name(field));
+                let ty = sql_type(field)?;
+                let nullable = if field.nullable { "" } else { " NOT NULL" };
+                writeln!(sql, "ALTER TABLE {tbl} ADD COLUMN {col} {ty}{nullable};").unwrap();
+            }
+        }
+
+        // Dropped columns
+        for old_field in &old_model.fields {
+            if matches!(old_field.field_type, FieldType::Model(_)) { continue; }
+            if !new_fields.contains(old_field.name.as_str()) {
+                let col = quote_identifier(&column_name(old_field));
+                writeln!(sql, "ALTER TABLE {tbl} DROP COLUMN IF EXISTS {col};").unwrap();
+            }
+        }
+    }
+
+    Ok(sql)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -1,13 +1,13 @@
 # RustORM CLI
 
-RustORM CLI is the schema parser, validator, Rust code generator, migration generator, and developer workflow tool for RustORM.
+RustORM CLI is the schema parser, validator, Rust code generator, migration system, and developer workflow tool for RustORM.
 
-It aims to bring a Prisma-inspired development workflow to Rust by using a schema file to describe models, fields, and relations, then generating Rust entity code, initial database schema SQL, and providing watch-mode regeneration with direct database migration execution.
+It aims to bring a Prisma-inspired development workflow to Rust by using a schema file to describe models, fields, and relations, then generating Rust entity code, managing database migrations with tracking and diffing, and providing watch-mode regeneration with direct database execution.
 
 The CLI is a separate project from the RustORM runtime.
 
 > **Status:** Active development — V0.1  
-> Schema parsing, AST construction, semantic validation, entity and CRUD code generation, initial SQL migration generation, watch-mode development workflow, migration execution, and `.env`/`config.toml` configuration are implemented. Generated-code compilation and full application-level integration have been verified end-to-end with an Axum example.
+> Schema parsing, AST construction, semantic validation, entity and CRUD code generation, migration generation with **tracking and schema diffing**, watch-mode development workflow, multi-file migration execution, auto-numbered incremental migrations, and `.env`/`config.toml` configuration are implemented. Generated-code compilation and full application-level integration have been verified end-to-end with an Axum example.
 
 ---
 
@@ -17,25 +17,18 @@ The CLI is a separate project from the RustORM runtime.
 rust.schema
     |
     v
-Lexer
+Lexer → Parser → Schema AST → Validator
     |
-    v
-Parser
-    |
-    v
-Schema AST
-    |
-    v
-Validator
-    |
-    +--------------------+
-    |                    |
-    v                    v
-Entity Generator    Migration Generator
-    |                    |
-    v                    v
-generated/          migrations/
-entities.rs         0001_initial.sql
+    +--------------------+---------------------+
+    |                    |                     |
+    v                    v                     v
+Entity Generator   Migration Generator   Snapshot Manager
+    |                    |                     |
+    v                    v                     v
+generated/          migrations/           snapshot.json
+entities.rs         0001_initial.sql      (change detection)
+                    0002_schema_update.sql
+                    0003_...
 ```
 
 ## Runtime Boundary
@@ -43,13 +36,14 @@ entities.rs         0001_initial.sql
 ```text
 RustORM CLI
     |
-    +-- Schema parsing
-    +-- Schema validation
-    +-- Rust code generation
-    +-- Initial migration SQL generation
+    +-- Schema parsing & validation
+    +-- Rust code generation (entities, CRUD, serde derives)
+    +-- Migration SQL generation (initial + incremental diffs)
+    +-- Migration tracking (_rustorm_migrations table)
+    +-- Schema diffing (ALTER TABLE ADD/DROP COLUMN)
     +-- Watch-mode regeneration (dev command)
-    +-- Migration execution (--apply flag)
-    +-- Configuration (.env / config.toml)
+    +-- Multi-file migration execution (--apply flag)
+    +-- Configuration (.env / config.toml / env var / CLI arg)
               |
               v
        RustORM Runtime
@@ -63,7 +57,7 @@ RustORM CLI
 
 The CLI is a toolchain, not a second ORM runtime. Generated Rust code targets the existing RustORM runtime and its supporting dependencies.
 
-The `migrate` command supports both SQL file generation and direct database execution via the `--apply` flag.
+The `migrate --apply` command scans all `.sql` files in the migrations directory, checks each against the tracking table via checksum, and applies only pending migrations sequentially.
 
 ---
 
@@ -318,7 +312,7 @@ ReferentialAction
 ModelAttribute
 ```
 
-The AST stores model definitions, field types, nullability, array metadata, field attributes, and model-level attributes.
+All AST types derive `serde::Serialize` and `serde::Deserialize` for snapshot persistence and change detection.
 
 **Status:** Implemented for the current V0.1 schema language.
 
@@ -497,9 +491,11 @@ The consuming project must declare compatible dependencies and use runtime APIs 
 
 ---
 
-# 7. Migration Generator
+# 7. Migration System
 
-The migration generator converts schema information into an initial SQL schema file.
+The migration system handles initial schema generation, incremental schema diffing, migration tracking, and multi-file sequential execution.
+
+## Initial Migration Generation
 
 Default output:
 
@@ -507,11 +503,9 @@ Default output:
 .rustorm/migrations/0001_initial.sql
 ```
 
-The output path can be supplied to the CLI.
+### Implemented SQL Generation
 
-## Implemented SQL Generation
-
-- `CREATE TABLE`
+- `CREATE TABLE IF NOT EXISTS` (idempotent)
 - Scalar column definitions
 - Single-column primary keys
 - Integer auto-increment columns using `SERIAL`
@@ -519,16 +513,17 @@ The output path can be supplied to the CLI.
 - Supported scalar SQL types
 - Field-level unique constraints
 - Supported default values
-- Mapped table names
-- Mapped column names
+- Mapped table names (`@@map`)
+- Mapped column names (`@map`)
 - `CREATE INDEX`
 - `CREATE UNIQUE INDEX`
 - Foreign-key constraints
 - Supported `ON DELETE` actions
 - Single-column and composite foreign-key SQL metadata where supported by relation definitions
 - Quoted SQL identifiers with embedded quote escaping
+- `_rustorm_migrations` tracking table (auto-created)
 
-## Schema-to-SQL Type Mapping
+### Schema-to-SQL Type Mapping
 
 | Schema type | Generated SQL type |
 |---|---|
@@ -545,37 +540,113 @@ Array syntax is represented in SQL type generation by appending `[]`, but the co
 
 Application-managed defaults such as CUID and identifier generation are not translated into equivalent SQL defaults by the current migration generator.
 
+## Migration Tracking
+
+Every migration run automatically manages a `_rustorm_migrations` tracking table:
+
+```sql
+CREATE TABLE IF NOT EXISTS _rustorm_migrations (
+    id SERIAL PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE,
+    checksum TEXT NOT NULL,
+    applied_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+```
+
+Tracking behavior:
+
+- **Checksum calculation:** Each migration file's SQL content is hashed (DefaultHasher) to produce a checksum
+- **Skip logic:** If a migration with the same name and matching checksum already exists in the tracking table, it is skipped
+- **Drift detection:** If a migration with the same name but different checksum is found, a clear error is returned indicating schema drift
+- **Recording:** After successful execution, each migration is recorded in the tracking table with its name and checksum
+- **Idempotency:** Running `migrate --apply` multiple times with the same schema produces no side effects
+
+**Verified:** Tracking system tested end-to-end — fresh apply, re-apply skip, and drift detection all working.
+
+## Schema Diffing (Incremental Migrations)
+
+When `rustorm dev` detects a schema change, it compares the current schema against the saved snapshot (`snapshot.json`) and generates an incremental migration file.
+
+### Supported Diff Operations
+
+- **ADD COLUMN:** New fields in existing models generate `ALTER TABLE ... ADD COLUMN` statements
+- **DROP COLUMN:** Removed fields from existing models generate `ALTER TABLE ... DROP COLUMN IF EXISTS` statements
+- **New tables:** Detected and noted in diff output (full CREATE TABLE handled by regeneration)
+- **Dropped tables:** Generate `DROP TABLE IF EXISTS ... CASCADE` statements
+
+### Auto-Numbering
+
+Diff migration files are automatically numbered based on existing migration files:
+
+```text
+0001_initial.sql
+0002_schema_update.sql   ← First schema change
+0003_schema_update.sql   ← Second schema change
+0004_...                 ← And so on
+```
+
+The numbering logic scans all existing `.sql` files in the migrations directory, finds the highest number, and increments it. This prevents duplicate numbering and maintains correct sequential ordering.
+
+### Snapshot-Based Change Detection
+
+- Snapshots are stored as serialized Schema AST in `snapshot.json`
+- On each schema save, the old snapshot is loaded and compared against the new parsed schema
+- Only actual structural changes trigger diff migration generation
+- Unchanged schemas skip diff generation entirely
+- Snapshot is updated after each successful regeneration
+
+**Verified:** Schema diffing tested — field addition generates correct ALTER TABLE, auto-numbering assigns correct sequence numbers, duplicate migrations are prevented.
+
 ## Migration Execution
 
-The `migrate --apply` command executes generated migration SQL directly against a PostgreSQL database.
+The `migrate --apply` command executes migrations against a PostgreSQL database.
 
-**Priority order for database URL resolution:**
+### Multi-File Sequential Execution
+
+Unlike single-file execution, `migrate --apply` now:
+
+1. Scans all `.sql` files in the migrations directory
+2. Sorts them alphabetically by filename
+3. For each file:
+   - Calculates checksum
+   - Checks tracking table for existing record
+   - Skips if already applied with matching checksum
+   - Returns error if checksum mismatch (schema drift)
+   - Executes SQL if not yet applied
+   - Records in tracking table after successful execution
+4. Lists all tables in the database after completion
+
+### Database URL Resolution
+
+**Priority order:**
 
 1. `--database` CLI argument
 2. `DATABASE_URL` environment variable
 3. `.rustorm/.env` file
 4. `.rustorm/config.toml` file
 
-Execution behavior:
+Password is masked in console output for security.
 
-- Drops existing tables (for initial migration)
-- Executes generated SQL
+### Execution Behavior
+
+- Ensures `_rustorm_migrations` tracking table exists before processing
+- Processes all migration files sequentially
+- Reports per-file status (skip / apply / error)
 - Lists created tables on success
-- Reports connection and execution errors
+- Reports connection and execution errors clearly
 
-**Verified:** Migration execution has been tested end-to-end against PostgreSQL.
+**Verified:** Multi-file migration execution tested end-to-end against PostgreSQL — initial migration, incremental diff migration, and re-run skip all working correctly.
 
 ## Not Implemented Yet
 
-- Schema diffing
-- `ALTER TABLE` migrations
-- Adding, dropping, or renaming columns
-- Adding or removing indexes through schema diffs
-- Many-to-many pivot-table creation
-- Migration history tracking
-- Migration status command
+- Column type changes (ALTER COLUMN TYPE)
+- Column rename detection
+- Index additions/removals through schema diffs
+- Many-to-many pivot-table creation in diffs
+- Migration status reporting command
 - Automatic rollback
 - Development and reset migration workflows
+- Constraint modifications through diffs
 
 ---
 
@@ -625,6 +696,8 @@ Starts a file watcher on `.rustorm/schema.rustorm`:
 - Performs initial generation on start
 - Auto-regenerates entities and migrations on schema change
 - Uses snapshot-based change detection to skip unnecessary regeneration
+- Generates incremental diff migrations when schema changes are detected
+- Auto-numbers diff migration files sequentially
 - Includes 300ms debounce to handle editor save events
 - Press `Ctrl+C` to stop
 
@@ -670,18 +743,36 @@ rustorm migrate rust.schema migrations/custom_initial.sql
 
 The output directory is created if necessary. An existing output file can be overwritten.
 
-## Apply Migration to Database
+## Apply Migrations to Database
 
 ```powershell
 rustorm migrate --apply
 ```
 
-Reads the database URL from `.env`, `config.toml`, or `--database` argument and executes the generated migration SQL against PostgreSQL.
+Scans all `.sql` files in the migrations directory, checks each against the tracking table, and applies only pending migrations sequentially.
 
 With explicit database URL:
 
 ```powershell
 rustorm migrate --apply --database postgres://postgres:admin@localhost/mydb
+```
+
+Example output:
+
+```text
+🚀 Applying migrations to database...
+   Database: postgres://postgres:****@localhost/mydb
+📋 Found 3 migration file(s)
+
+⏭️  0001_initial.sql already applied. Skipping.
+⏭️  0002_schema_update.sql already applied. Skipping.
+📝 Applying: 0003_schema_update.sql
+✅ 0003_schema_update.sql applied successfully!
+
+Tables in database:
+  📋 _rustorm_migrations
+  📋 posts
+  📋 users
 ```
 
 ## Default Behavior
@@ -761,6 +852,8 @@ my-project/
     │   └── entities.rs     ← Auto-generated (do not edit)
     └── migrations/
         ├── 0001_initial.sql
+        ├── 0002_schema_update.sql
+        ├── 0003_...
         └── snapshot.json   ← Change detection state
 ```
 
@@ -833,6 +926,11 @@ These results are based on the latest reported local run and should be refreshed
 - Foreign-key SQL generation
 - Snapshot-based change detection
 - Serde derive generation
+- Migration tracking table creation
+- Checksum-based skip logic
+- Schema diffing (ADD/DROP COLUMN)
+- Multi-file migration execution
+- Auto-numbering of diff migrations
 
 ## End-to-End Verification
 
@@ -843,14 +941,17 @@ rustorm init
       ↓
 .rustorm/schema.rustorm (edit schema)
       ↓
-rustorm dev (watch mode → auto-regenerate)
+rustorm dev (watch mode → auto-regenerate + diff generation)
       ↓
 .rustorm/generated/entities.rs
 .rustorm/migrations/0001_initial.sql
+.rustorm/migrations/0002_schema_update.sql (auto-generated diff)
       ↓
-rustorm migrate --apply (reads .env automatically)
+rustorm migrate --apply (multi-file, tracking-aware)
       ↓
-PostgreSQL: CREATE / READ / UPDATE / DELETE
+PostgreSQL: CREATE / ALTER / READ / UPDATE / DELETE
+      ↓
+Re-run migrate --apply → all migrations skipped (checksum match)
       ↓
 Axum API serving JSON responses
       ↓
@@ -867,6 +968,11 @@ Priority verification tasks completed:
 6. ✅ Verify generated migration SQL against a PostgreSQL database.
 7. ✅ CLI end-to-end tests for `validate`, `generate`, `migrate`, `init`, and `dev`.
 8. ✅ Test error handling and overwriting behavior for generated files.
+9. ✅ Migration tracking table auto-creation and recording.
+10. ✅ Checksum-based skip and drift detection.
+11. ✅ Schema diffing generates correct ALTER TABLE statements.
+12. ✅ Multi-file sequential migration execution.
+13. ✅ Auto-numbering assigns correct sequence numbers to diff migrations.
 
 ---
 
@@ -905,6 +1011,10 @@ Priority verification tasks completed:
 - [x] `.env` and `config.toml` configuration support
 - [x] `.gitignore` generation
 - [x] Snapshot-based change detection
+- [x] Migration tracking table
+- [x] Checksum-based skip and drift detection
+- [x] Multi-file sequential migration execution
+- [x] Auto-numbering for diff migrations
 - [ ] Add CLI end-to-end tests.
 - [ ] Improve error messages and failure cases.
 - [x] Review safe handling of existing generated files.
@@ -915,11 +1025,15 @@ Priority verification tasks completed:
 - [x] Generate initial `CREATE TABLE` SQL.
 - [x] Generate supported indexes and foreign-key constraints.
 - [x] Apply migrations to live database (`--apply`).
-- [ ] Generate schema-diff migrations.
-- [ ] Add `ALTER TABLE` support.
-- [ ] Add migration history.
-- [ ] Add migration status reporting.
-- [ ] Add safe migration application.
+- [x] Migration tracking table (`_rustorm_migrations`).
+- [x] Schema-diff migrations (ADD/DROP COLUMN).
+- [x] Auto-numbered incremental migration files.
+- [x] Checksum-based idempotent execution.
+- [x] Schema drift detection.
+- [ ] Column type changes (ALTER COLUMN TYPE).
+- [ ] Column rename detection.
+- [ ] Index additions/removals through diffs.
+- [ ] Add migration status reporting command.
 - [ ] Design rollback and reset workflows.
 - [ ] Generate many-to-many pivot tables.
 
@@ -931,18 +1045,19 @@ Priority verification tasks completed:
 - [ ] Document supported and unsupported schema features.
 - [ ] Document dependency and runtime-version requirements.
 - [x] Prepare a reproducible V0.1 example workflow.
+- [ ] Prepare crates.io publication.
 
 ---
 
 # 13. Current Milestone
 
-**V0.1 — Schema → Validated AST → Generated Rust → Migration → Database → Web API**
+**V0.1 — Schema → Validated AST → Generated Rust → Tracked Migrations → Schema Diffing → Database → Web API**
 
 ## Implemented
 
 - [x] Lexer
 - [x] Parser
-- [x] Schema AST
+- [x] Schema AST (with serde Serialize/Deserialize)
 - [x] Core semantic validation
 - [x] Model and entity generation
 - [x] Typed field generation
@@ -952,30 +1067,41 @@ Priority verification tasks completed:
 - [x] Update struct generation
 - [x] `UpdateData` generation
 - [x] Serde `Serialize`/`Deserialize` derives on generated types
-- [x] Initial SQL migration generation
+- [x] Initial SQL migration generation (`CREATE TABLE IF NOT EXISTS`)
+- [x] Migration tracking table (`_rustorm_migrations`)
+- [x] Checksum-based migration skip logic
+- [x] Schema drift detection (checksum mismatch error)
+- [x] Schema diffing (ADD COLUMN, DROP COLUMN)
+- [x] Auto-numbered incremental migration files
+- [x] Multi-file sequential migration execution
+- [x] Snapshot-based change detection
 - [x] Migration execution (`--apply`)
 - [x] `validate` command
 - [x] `generate` command
 - [x] `migrate` command for SQL file generation
 - [x] `init` command (project scaffolding)
-- [x] `dev` command (watch mode)
+- [x] `dev` command (watch mode with diff generation)
 - [x] `.env` file support
 - [x] `config.toml` support
 - [x] `.gitignore` generation
-- [x] Snapshot-based change detection
 - [x] Shared naming module (table/column conventions)
 - [x] Help and version arguments
 - [x] 61 tests passing at the latest reported checkpoint
 - [x] Clippy clean at the latest reported checkpoint
 - [x] End-to-end verification with Axum example
+- [x] Migration tracking verified end-to-end
+- [x] Schema diffing verified end-to-end
+- [x] Multi-file execution verified end-to-end
 
 ## Remaining Before a Reliable V0.1 Release
 
 - [ ] Resolve or clearly document unsupported schema combinations.
 - [ ] Complete the user-facing usage guide.
 - [ ] Prepare crates.io publication.
+- [ ] Nested `.with()` eager loading.
+- [ ] ORM-level error types.
 
-The implementation is beyond basic entity generation. Generated-code compilation, runtime integration, database behavior, and web framework integration have all been verified end-to-end.
+The implementation is beyond basic entity generation. Migration tracking, schema diffing, multi-file execution, generated-code compilation, runtime integration, database behavior, and web framework integration have all been verified end-to-end.
 
 ---
 
@@ -1032,8 +1158,10 @@ CLI
 ├── Validate schema
 ├── Generate Rust code
 ├── Generate initial SQL
+├── Generate incremental diffs (schema diffing)
+├── Track applied migrations (checksum-based)
 ├── Watch for schema changes (dev)
-├── Execute migrations (--apply)
+├── Execute migrations sequentially (--apply)
 └── Manage configuration (.env / config.toml)
 
 Runtime
@@ -1057,22 +1185,17 @@ This separation is central to the long-term design of RustORM.
 
 | Section | Change |
 |---|---|
-| Header status | Updated to "Active development", added watch mode, migration execution, config, Axum verification |
-| Architecture diagram | Added watch-mode, migration execution, configuration nodes |
-| Runtime Boundary | Added 3 new CLI responsibilities |
-| §6 Entity Generator | Added serde derives note, verified compilation statement |
-| §6 Generated Model Example | Updated derive line to include Serialize/Deserialize |
-| §6 Update Generation | Added verified end-to-end statement |
-| §7 Migration Generator | Added "Migration Execution" subsection (was "Not Implemented") |
-| §7 Not Implemented Yet | Removed "Applying SQL to a live database" (now done) |
-| §8 CLI Commands | Added `init`, `dev`, `migrate --apply` commands |
-| **NEW §9 Configuration** | Documents .env, config.toml, env var, CLI arg priority |
-| §10 Project Integration | Updated layout, added consumer setup, verified Axum note |
-| §11 Testing | Updated to 61 tests, added E2E verification section, marked all 8 priority tasks ✅ |
-| §12 Roadmap Phase 1 | All 7 items now ✅ |
-| §12 Roadmap Phase 3 | Added 6 new ✅ items (init, dev, apply, .env, config, gitignore, snapshot) |
-| §12 Roadmap Phase 4 | Added `Apply migrations ✅` |
-| §12 Roadmap Phase 5 | Added Axum example ✅, compilation tests ✅, DB integration tests ✅ |
-| §13 Current Milestone | Title updated, added 12 new ✅ items, remaining reduced to 3 |
-| **NEW §14 Axum Integration** | Working code example showing direct generated type usage |
+| Header status | Added migration tracking, schema diffing, multi-file execution, auto-numbering |
+| Architecture diagram | Added Snapshot Manager node, multi-file output |
+| Runtime Boundary | Added 4 new CLI responsibilities (tracking, diffing, multi-file, auto-numbering) |
+| §4 Schema AST | Added serde derive note |
+| §7 Migration System | **Complete rewrite** — added Tracking, Schema Diffing, Multi-File Execution subsections |
+| §7 Not Implemented Yet | Removed tracking, diffing, ALTER TABLE, safe application (all done); added remaining items |
+| §8 CLI Commands | Updated `migrate --apply` with multi-file example output |
+| §10 Project Integration | Updated layout to show multiple migration files |
+| §11 Testing | Added 5 new test coverage areas, 5 new E2E verification tasks (all ✅) |
+| §12 Roadmap Phase 3 | Added 4 new ✅ items (tracking, checksum, multi-file, auto-numbering) |
+| §12 Roadmap Phase 4 | Added 5 new ✅ items, added remaining diff items |
+| §12 Roadmap Phase 5 | Added crates.io prep |
+| §13 Current Milestone | Title updated, added 10 new ✅ items, remaining updated |
 | §15 Design Principles | Added 3 new CLI responsibilities to diagram |
