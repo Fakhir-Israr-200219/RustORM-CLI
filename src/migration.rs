@@ -9,6 +9,15 @@ use std::fmt::Write;
 pub fn generate_migration(schema: &Schema) -> Result<String, String> {
     let mut sql = String::new();
 
+    // Migration tracking table (always included)
+    sql.push_str("-- RustORM Migration Tracking\n");
+    sql.push_str("CREATE TABLE IF NOT EXISTS _rustorm_migrations (\n");
+    sql.push_str("    id SERIAL PRIMARY KEY,\n");
+    sql.push_str("    name TEXT NOT NULL UNIQUE,\n");
+    sql.push_str("    checksum TEXT NOT NULL,\n");
+    sql.push_str("    applied_at TIMESTAMP NOT NULL DEFAULT NOW()\n");
+    sql.push_str(");\n\n");
+
     for model in &schema.models {
         validate_model(model)?;
 
@@ -158,7 +167,7 @@ pub fn generate_migration(schema: &Schema) -> Result<String, String> {
 
         writeln!(
             sql,
-            "CREATE TABLE {} (\n    {}\n);\n",
+            "CREATE TABLE IF NOT EXISTS {} (\n    {}\n);\n",
             quote_identifier(&table),
             definitions
                 .iter()
@@ -363,7 +372,7 @@ mod tests {
 
         let sql = generate_migration(&schema).unwrap();
 
-        assert!(sql.contains("CREATE TABLE \"users\""));
+        assert!(sql.contains("CREATE TABLE IF NOT EXISTS \"users\""));
         assert!(sql.contains("\"id\" INTEGER NOT NULL"));
         assert!(sql.contains("\"email\" TEXT NOT NULL"));
         assert!(sql.contains("\"nickname\" TEXT"));

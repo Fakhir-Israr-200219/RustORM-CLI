@@ -294,20 +294,80 @@ fn run() -> Result<(), String> {
 
                     // Drop existing tables first (for initial migration)
                     // In future, this will be smarter with migration tracking
+                    // Calculate checksum of current migration
+                    use std::collections::hash_map::DefaultHasher;
+                    use std::hash::{Hash, Hasher};
+
+                    let mut hasher = DefaultHasher::new();
+                    sql.hash(&mut hasher);
+                    let checksum = format!("{:x}", hasher.finish());
+
+                    let migration_name = migration_file
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or("0001_initial.sql");
+
+                    // Ensure tracking table exists before checking history
                     sqlx::raw_sql(
-                        "DROP TABLE IF EXISTS profiles CASCADE; \
-                 DROP TABLE IF EXISTS posts CASCADE; \
-                 DROP TABLE IF EXISTS users CASCADE;",
+                        "CREATE TABLE IF NOT EXISTS _rustorm_migrations (\n\
+                             id SERIAL PRIMARY KEY,\n\
+                             name TEXT NOT NULL UNIQUE,\n\
+                             checksum TEXT NOT NULL,\n\
+                             applied_at TIMESTAMP NOT NULL DEFAULT NOW()\n\
+                         );",
                     )
                     .execute(&pool)
                     .await
-                    .map_err(|e| format!("Failed to drop existing tables: {e}"))?;
+                    .map_err(|e| format!("Failed to create migration tracking table: {e}"))?;
+
+                    // Check if already applied
+                    let existing: Option<(String,)> =
+                        sqlx::query_as("SELECT checksum FROM _rustorm_migrations WHERE name = $1")
+                            .bind(migration_name)
+                            .fetch_optional(&pool)
+                            .await
+                            .map_err(|e| format!("Failed to check migration history: {e}"))?;
+
+                    if let Some((existing_checksum,)) = existing {
+                        if existing_checksum == checksum {
+                            println!(
+                                "⏭️  Migration '{}' already applied (checksum match). Skipping.",
+                                migration_name
+                            );
+                            pool.close().await;
+                            return Ok::<(), String>(());
+                        } else {
+                            return Err(format!(
+                                "❌ Schema drift detected!\n\
+                                 Migration '{}' was previously applied with a different checksum.\n\
+                                 Old: {}\n\
+                                 New: {}\n\n\
+                                 This means the schema file was modified after migration.\n\
+                                 Options:\n\
+                                   1. Revert schema changes to match applied migration\n\
+                                   2. Reset database and re-apply\n\
+                                   3. Create a new migration for the changes",
+                                migration_name, existing_checksum, checksum
+                            ));
+                        }
+                    }
 
                     // Execute migration SQL
+                    println!("📝 Applying migration: {}", migration_name);
                     sqlx::raw_sql(&sql)
                         .execute(&pool)
                         .await
                         .map_err(|e| format!("Failed to apply migration: {e}"))?;
+
+                    // Record migration
+                    sqlx::query("INSERT INTO _rustorm_migrations (name, checksum) VALUES ($1, $2)")
+                        .bind(migration_name)
+                        .bind(&checksum)
+                        .execute(&pool)
+                        .await
+                        .map_err(|e| format!("Failed to record migration: {e}"))?;
+
+                    println!("💾 Migration recorded in _rustorm_migrations");
 
                     // List created tables
                     let tables: Vec<(String,)> = sqlx::query_as(
