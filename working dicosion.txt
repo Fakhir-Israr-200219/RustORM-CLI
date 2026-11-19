@@ -50,6 +50,7 @@ Legend: ✅ Done / Verified | 🟡 Implemented / Verification Pending | ⏳ Pend
 - [x] RelationAttribute
 - [x] ReferentialAction
 - [x] ModelAttribute
+- [x] Serde Serialize/Deserialize on all AST types (for snapshot persistence)
 
 ## 5. VALIDATOR
 - [x] Duplicate models
@@ -115,12 +116,12 @@ Legend: ✅ Done / Verified | 🟡 Implemented / Verification Pending | ⏳ Pend
 - [ ] Verify `@updatedAt` behavior
 - [ ] Add focused edge-case Create/Insert/Update tests
 
-## 7. MIGRATION GENERATOR
+## 7. MIGRATION SYSTEM
 
 ### Schema-to-SQL
 - [x] Read schema and validate before migration generation
 - [x] Generate initial tables for schema models
-- [x] Generate `CREATE TABLE`
+- [x] Generate `CREATE TABLE IF NOT EXISTS` (idempotent)
 - [x] Generate columns and SQL types
 - [x] Generate nullable / `NOT NULL` constraints
 - [x] Generate primary keys
@@ -135,40 +136,62 @@ Legend: ✅ Done / Verified | 🟡 Implemented / Verification Pending | ⏳ Pend
 - [x] Single foreign-key generation verified
 - [x] Mapped identifiers in foreign-key constraints verified
 - [x] Referential actions in generated constraints verified
+- [x] `_rustorm_migrations` tracking table auto-created in initial migration
 - [ ] Generate `@updatedAt` behavior where supported
 - [ ] Verify composite foreign-key generation
 - [ ] Validate referenced columns produce useful errors for invalid metadata
 - [ ] Generate many-to-many pivot tables
 - [ ] Add comprehensive migration-generator edge-case tests
 
+### Migration Tracking
+- [x] `_rustorm_migrations` table auto-creation
+- [x] Checksum calculation for each migration file
+- [x] Skip already-applied migrations (matching checksum)
+- [x] Schema drift detection (checksum mismatch → clear error)
+- [x] Record applied migrations in tracking table after execution
+- [x] Idempotent re-runs (no side effects on repeated apply)
+- [x] End-to-end tracking verification (fresh apply → re-apply skip → drift error)
+
+### Schema Diffing (Incremental Migrations)
+- [x] Snapshot-based change detection (old snapshot vs new schema)
+- [x] Detect added columns → `ALTER TABLE ADD COLUMN`
+- [x] Detect removed columns → `ALTER TABLE DROP COLUMN IF EXISTS`
+- [x] Detect new tables (noted in diff output)
+- [x] Detect dropped tables → `DROP TABLE IF EXISTS CASCADE`
+- [x] Auto-numbering of diff migration files (sequential based on existing files)
+- [x] Diff migration generation integrated into `rustorm dev` watch mode
+- [x] Snapshot persistence (serde Serialize/Deserialize on AST)
+- [ ] Column type changes (ALTER COLUMN TYPE)
+- [ ] Column rename detection
+- [ ] Index additions/removals through diffs
+- [ ] Constraint modifications through diffs
+
 ### Migration Execution
 - [x] Execute migrations against the database (`--apply`)
+- [x] Multi-file sequential execution (scan + sort + apply all .sql files)
 - [x] Database URL resolution (CLI arg > env > .env > config.toml)
 - [x] Password masking in console output
 - [x] Table listing after successful migration
 - [x] Connection and execution error reporting
+- [x] Per-file status reporting (skip / apply / error)
 - [ ] Handle migration failures and transactions
 - [ ] Prevent accidental destructive migrations without confirmation
 
 ### Schema Changes and History
-- [ ] Detect added columns
-- [ ] Detect changed columns
-- [ ] Detect removed columns and define safe behavior
-- [ ] Generate `ALTER TABLE` statements
-- [ ] Handle constraint and index changes
-- [ ] Create timestamped migration files
-- [ ] Maintain migration history
-- [ ] Track applied migrations
+- [x] Track applied migrations (via `_rustorm_migrations` table)
+- [x] Maintain migration history (name + checksum + timestamp)
+- [ ] Create timestamped migration files (currently sequential numbered)
 - [ ] Automatic rollback
 - [ ] Development and reset migration workflows
+- [ ] Migration status reporting command
 
 ## 8. CLI COMMANDS
 - [x] `rustorm init` — project scaffolding with .rustorm/ structure
-- [x] `rustorm dev` — watch mode with auto-regeneration
+- [x] `rustorm dev` — watch mode with auto-regeneration + diff generation
 - [x] `rustorm generate` — entity generation
 - [x] `rustorm validate` — schema validation
 - [x] `rustorm migrate` — initial SQL file generation
-- [x] `rustorm migrate --apply` — direct database execution
+- [x] `rustorm migrate --apply` — multi-file sequential database execution with tracking
 - [x] Help command (`--help`, `-h`)
 - [x] Version command (`--version`, `-V`)
 - [x] Command argument validation
@@ -217,6 +240,10 @@ Legend: ✅ Done / Verified | 🟡 Implemented / Verification Pending | ⏳ Pend
 - [x] Axum JSON round-trip verification
 - [x] Clippy clean (`cargo clippy --all-targets --all-features -- -D warnings`)
 - [x] Test suite compiling and passing (61 tests)
+- [x] Migration tracking end-to-end verification
+- [x] Schema diffing end-to-end verification
+- [x] Multi-file execution end-to-end verification
+- [x] Auto-numbering verification
 - [ ] Source line/column information for lexer/parser/validator errors
 - [ ] CLI command integration tests
 - [ ] Run `cargo fmt --check`
@@ -226,6 +253,8 @@ Legend: ✅ Done / Verified | 🟡 Implemented / Verification Pending | ⏳ Pend
 - [x] Generated code compiles in sample project
 - [x] Migration workflow verified against test database
 - [x] End-to-end CRUD verified through web API
+- [x] Migration tracking verified end-to-end
+- [x] Schema diffing verified end-to-end
 - [ ] Document schema syntax and supported attributes
 - [ ] Document CLI commands and usage examples
 - [ ] Verify clean build from fresh checkout
@@ -237,11 +266,12 @@ Legend: ✅ Done / Verified | 🟡 Implemented / Verification Pending | ⏳ Pend
 - [ ] Documentation: schema syntax reference
 - [ ] Documentation: CLI commands guide
 - [ ] Nested `.with()` eager loading
-- [ ] Migration tracking table
-- [ ] Schema diffing (incremental migrations)
+- [ ] ORM-level error types
 - [ ] Rollback support
 - [ ] crates.io publication preparation
 - [ ] Multi-DB architecture planning
+- [ ] Column type changes in schema diffing
+- [ ] Migration status reporting command
 
 
 ─────────────────────────────────────────────
@@ -258,15 +288,21 @@ RustORM-CLI is responsible for:
         ↓
     Parser
         ↓
-    Schema AST
+    Schema AST (with serde Serialize/Deserialize)
         ↓
     Validator
         ↓
     Code generators
         ↓
+    Snapshot manager (change detection)
+        ↓
+    Schema differ (incremental migrations)
+        ↓
     CLI commands / project integration
         ↓
-    Migration execution (--apply)
+    Migration tracking (_rustorm_migrations)
+        ↓
+    Migration execution (--apply, multi-file sequential)
         ↓
     Configuration (.env / config.toml)
 
@@ -290,6 +326,9 @@ The generated code targets the existing RustORM runtime API.
                ▼           ▼
           .rustorm/      .rustorm/
           generated/     migrations/
+               │         ├── 0001_initial.sql
+               │         ├── 0002_schema_update.sql
+               │         └── snapshot.json
                │           │
                ▼           ▼
         User's Rust App ←──┘
@@ -320,9 +359,11 @@ CLI Tests:          61 passed ✅
 Clippy:             Clean ✅
 End-to-End:         Verified ✅
 Axum Example:       Working ✅
-Migration Apply:    Working ✅
-Watch Mode:         Working ✅
+Migration Apply:    Working ✅ (multi-file sequential)
+Watch Mode:         Working ✅ (with diff generation)
 Config System:      Working ✅
+Migration Tracking: Working ✅ (checksum-based skip + drift detection)
+Schema Diffing:     Working ✅ (ADD/DROP COLUMN + auto-numbering)
 
 Previously paused items (BindValue, InsertData, UpdateData):
 ALL COMPLETE ✅ — Runtime BindValue expansion finished,
