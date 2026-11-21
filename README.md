@@ -7,7 +7,7 @@ It aims to bring a Prisma-inspired development workflow to Rust by using a schem
 The CLI is a separate project from the RustORM runtime.
 
 > **Status:** Active development — V0.1  
-> Schema parsing, AST construction, semantic validation, entity and CRUD code generation, migration generation with **tracking and schema diffing**, watch-mode development workflow, multi-file migration execution, auto-numbered incremental migrations, and `.env`/`config.toml` configuration are implemented. Generated-code compilation and full application-level integration have been verified end-to-end with an Axum example.
+> Schema parsing, AST construction, semantic validation, entity and CRUD code generation, migration generation with **tracking and schema diffing**, watch-mode development workflow, multi-file migration execution, auto-numbered incremental migrations, `.env`/`config.toml` configuration, **nested eager loading support**, and **Axum integration** are implemented. Generated-code compilation and full application-level integration have been verified end-to-end with an Axum example including **2-level nested eager loading**.
 
 ---
 
@@ -52,6 +52,9 @@ RustORM CLI
               +-- Database execution
               +-- Entity operations
               +-- Runtime relations
+              +-- Nested eager loading (.with / .with_nested)
+              +-- Wrapper types (DateTime, Decimal, JsonValue)
+              +-- Send + Sync async compatibility
               +-- Transactions
 ```
 
@@ -100,9 +103,9 @@ These types are represented in the Schema AST and mapped to Rust types by the en
 | `String` | `String` |
 | `Boolean` | `bool` |
 | `Float` | `f64` |
-| `DateTime` | `chrono::NaiveDateTime` |
-| `Decimal` | `rust_decimal::Decimal` |
-| `Json` | `serde_json::Value` |
+| `DateTime` | `rustorm::DateTime` |
+| `Decimal` | `rustorm::Decimal` |
+| `Json` | `rustorm::JsonValue` |
 
 Nullable fields use `Option<T>`. Scalar arrays are recognized by the parser and AST, but the current CRUD generator rejects scalar-array fields. Therefore, parser support does not imply complete end-to-end support.
 
@@ -378,7 +381,7 @@ The generator contains support for:
 - Entity implementations
 - Table and column definitions
 - Typed field constants
-- Scalar Rust types
+- Scalar Rust types (mapped to wrapper types where applicable)
 - Nullable Rust types
 - Mapped table and column names
 - Relation metadata and loaders
@@ -399,7 +402,7 @@ model User {
 The generated code follows this general shape:
 
 ```rust
-#[derive(Debug, serde::Serialize, serde::Deserialize, sqlx::FromRow)]
+#[derive(Debug, rustorm::serde::Serialize, rustorm::serde::Deserialize, sqlx::FromRow)]
 pub struct UserModel {
     pub id: i32,
     pub name: String,
@@ -410,7 +413,7 @@ pub struct User;
 
 The generator also emits an entity implementation and typed field constants. Exact generated output depends on the schema and the runtime API.
 
-**Verified:** Generated output compiles and works correctly in consumer crates including Axum web applications. Generated model structs include `Serialize` and `Deserialize` derives, enabling direct use with web framework JSON extractors without wrapper types.
+**Verified:** Generated output compiles and works correctly in consumer crates including Axum web applications. Generated model structs include `Serialize` and `Deserialize` derives, enabling direct use with web framework JSON extractors without wrapper types. **Nested eager loading verified end-to-end.**
 
 ## Table and Column Mapping
 
@@ -440,7 +443,7 @@ The generator contains support for:
 - Ordinary relation generation currently requires a single local field and a single referenced field.
 - Composite relation code generation is not implemented.
 - Many-to-many migration pivot-table creation is not implemented.
-- Generated relation code has been verified end-to-end with the runtime.
+- Generated relation code has been verified end-to-end with the runtime including nested eager loading.
 
 ## Create and Insert Generation
 
@@ -472,7 +475,7 @@ Primary-key and relation fields are excluded from the generated update payload.
 
 Update structs include `Serialize` and `Deserialize` derives.
 
-**Verification status:** Unit tests cover generated output patterns. End-to-end compilation and runtime behavior have been verified in consumer projects including Axum applications.
+**Verification status:** Unit tests cover generated output patterns. End-to-end compilation and runtime behavior have been verified in consumer projects including Axum applications with nested eager loading.
 
 ## Generated Code Dependencies
 
@@ -481,11 +484,10 @@ Generated output references the RustORM runtime and supporting crates, including
 ```text
 rustorm
 sqlx
-chrono
-rust_decimal
-serde_json
 serde
 ```
+
+Wrapper types (`rustorm::DateTime`, `rustorm::Decimal`, `rustorm::JsonValue`) are provided by the runtime, eliminating the need for consumers to depend directly on `chrono`, `rust_decimal`, or `serde_json`.
 
 The consuming project must declare compatible dependencies and use runtime APIs matching the generated code. The CLI itself generates source code as text.
 
@@ -882,7 +884,7 @@ use entities::{User, UserCreate};
 use rustorm::Entity;
 ```
 
-**Verified:** End-to-end integration has been tested with Axum web applications. Generated types work directly with Axum's `Json` extractor without wrapper types.
+**Verified:** End-to-end integration has been tested with Axum web applications including nested eager loading. Generated types work directly with Axum's `Json` extractor without wrapper types.
 
 ---
 
@@ -953,7 +955,7 @@ PostgreSQL: CREATE / ALTER / READ / UPDATE / DELETE
       ↓
 Re-run migrate --apply → all migrations skipped (checksum match)
       ↓
-Axum API serving JSON responses
+Axum API serving JSON responses with nested eager loading
       ↓
 ✅ ALL OPERATIONS PASSED
 ```
@@ -973,6 +975,9 @@ Priority verification tasks completed:
 11. ✅ Schema diffing generates correct ALTER TABLE statements.
 12. ✅ Multi-file sequential migration execution.
 13. ✅ Auto-numbering assigns correct sequence numbers to diff migrations.
+14. ✅ **Nested eager loading verified in Axum (User → Posts → Comments).**
+15. ✅ **Wrapper types (DateTime) verified in generated entities.**
+16. ✅ **Send + Sync compatibility verified with Axum handlers.**
 
 ---
 
@@ -998,6 +1003,9 @@ Priority verification tasks completed:
 - [ ] Review scalar-array support and its restrictions.
 - [x] Improve naming and pluralization behavior (shared naming module).
 - [ ] Ensure generated code handles defaults consistently.
+- [ ] Auto-generate `#[sqlx(rename)]` for `@map` fields.
+- [ ] Smart `#[serde(skip)]` for back-reference relation fields.
+- [ ] Exclude `@default(now())` fields from Create structs.
 
 ## Phase 3 — Complete CLI Workflows
 
@@ -1042,6 +1050,7 @@ Priority verification tasks completed:
 - [x] Add a sample application using the runtime (Axum example).
 - [x] Add generated-code compilation tests.
 - [x] Add database integration tests.
+- [x] Verify nested eager loading end-to-end.
 - [ ] Document supported and unsupported schema features.
 - [ ] Document dependency and runtime-version requirements.
 - [x] Prepare a reproducible V0.1 example workflow.
@@ -1051,7 +1060,7 @@ Priority verification tasks completed:
 
 # 13. Current Milestone
 
-**V0.1 — Schema → Validated AST → Generated Rust → Tracked Migrations → Schema Diffing → Database → Web API**
+**V0.1 — Schema → Validated AST → Generated Rust → Tracked Migrations → Schema Diffing → Database → Web API with Nested Eager Loading**
 
 ## Implemented
 
@@ -1092,22 +1101,25 @@ Priority verification tasks completed:
 - [x] Migration tracking verified end-to-end
 - [x] Schema diffing verified end-to-end
 - [x] Multi-file execution verified end-to-end
+- [x] **Nested eager loading verified (2-level: User → Posts → Comments)**
+- [x] **Wrapper types in generated entities (DateTime, Decimal, JsonValue)**
+- [x] **Send + Sync async compatibility verified**
 
 ## Remaining Before a Reliable V0.1 Release
 
 - [ ] Resolve or clearly document unsupported schema combinations.
 - [ ] Complete the user-facing usage guide.
 - [ ] Prepare crates.io publication.
-- [ ] Nested `.with()` eager loading.
 - [ ] ORM-level error types.
+- [ ] Generator automation (`@map` → `#[sqlx(rename)]`, smart `#[serde(skip)]`, `created_at` exclusion).
 
-The implementation is beyond basic entity generation. Migration tracking, schema diffing, multi-file execution, generated-code compilation, runtime integration, database behavior, and web framework integration have all been verified end-to-end.
+The implementation is beyond basic entity generation. Migration tracking, schema diffing, multi-file execution, generated-code compilation, runtime integration, database behavior, nested eager loading, and web framework integration have all been verified end-to-end.
 
 ---
 
 # 14. Axum Integration Example
 
-Generated entities include `Serialize` and `Deserialize` derives, enabling direct use with Axum without wrapper types:
+Generated entities include `Serialize` and `Deserialize` derives, enabling direct use with Axum including nested eager loading:
 
 ```rust
 mod entities {
@@ -1115,32 +1127,65 @@ mod entities {
 }
 
 use axum::{
-    extract::{Path, State},
-    http::StatusCode,
+    extract::State,
     response::Json,
-    routing::{get, post},
+    routing::get,
     Router,
 };
-use entities::{User, UserCreate};
+use entities::{User, Post};
 use rustorm::Entity;
+use serde::Serialize;
 use sqlx::PgPool;
 
 #[derive(Clone)]
 struct AppState { db: PgPool }
 
-async fn list_users(State(state): State<AppState>) -> Json<Vec<entities::UserModel>> {
-    Json(User::find().all(&state.db).await.unwrap_or_default())
+// DTO pattern for clean API responses
+#[derive(Serialize)]
+struct PostWithCommentsResponse {
+    #[serde(flatten)]
+    post: PostResponse,
+    comments: Vec<CommentResponse>,
 }
 
-async fn create_user(
+#[derive(Serialize)]
+struct UserWithNestedResponse {
+    #[serde(flatten)]
+    user: UserResponse,
+    posts: Vec<PostWithCommentsResponse>,
+}
+
+// 2-level nested eager loading (User → Posts → Comments)
+async fn list_users_with_posts_comments(
     State(state): State<AppState>,
-    Json(input): Json<UserCreate>,
-) -> Result<(StatusCode, Json<entities::UserModel>), StatusCode> {
-    let user = User::create(&state.db, input).await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    Ok((StatusCode::CREATED, Json(user)))
+) -> Json<Vec<UserWithNestedResponse>> {
+    let users = User::find()
+        .with_nested(User::posts, |q| q.with(Post::comments))
+        .all(&state.db)
+        .await
+        .unwrap_or_default();
+
+    let response = users.iter().map(|user| UserWithNestedResponse {
+        user: UserResponse::from(user),
+        posts: user.posts.iter().map(|post| PostWithCommentsResponse {
+            post: PostResponse::from(post),
+            comments: post.comments.iter().map(CommentResponse::from).collect(),
+        }).collect(),
+    }).collect();
+
+    Json(response)
 }
 ```
+
+**Verified endpoints:**
+
+| Endpoint | Relation Type | Status |
+|---|---|---|
+| `GET /users` | Basic CRUD | ✅ |
+| `GET /posts/with-user` | N:1 (ManyToOne) | ✅ |
+| `GET /users/with-posts` | 1:N (OneToMany) | ✅ |
+| `GET /users/with-profile` | 1:1 (OneToOne) | ✅ |
+| `GET /users/with-posts-comments` | **2-level nested** | ✅ |
 
 Full working example available at: [`rustorm-example-axum`](https://github.com/Fakhir-Israr-200219/rustorm-example-axum)
 
@@ -1169,6 +1214,9 @@ Runtime
 ├── Build queries
 ├── Execute database operations
 ├── Manage entities and relations
+├── Nested eager loading (.with / .with_nested)
+├── Wrapper types (DateTime, Decimal, JsonValue)
+├── Send + Sync async compatibility
 └── Handle transactions
 ```
 
@@ -1179,23 +1227,17 @@ Features should be marked complete only at the appropriate level: parser support
 This separation is central to the long-term design of RustORM.
 ```
 
----
-
-## Changes Made (Nothing Deleted)
+### Key Changes Summary
 
 | Section | Change |
 |---|---|
-| Header status | Added migration tracking, schema diffing, multi-file execution, auto-numbering |
-| Architecture diagram | Added Snapshot Manager node, multi-file output |
-| Runtime Boundary | Added 4 new CLI responsibilities (tracking, diffing, multi-file, auto-numbering) |
-| §4 Schema AST | Added serde derive note |
-| §7 Migration System | **Complete rewrite** — added Tracking, Schema Diffing, Multi-File Execution subsections |
-| §7 Not Implemented Yet | Removed tracking, diffing, ALTER TABLE, safe application (all done); added remaining items |
-| §8 CLI Commands | Updated `migrate --apply` with multi-file example output |
-| §10 Project Integration | Updated layout to show multiple migration files |
-| §11 Testing | Added 5 new test coverage areas, 5 new E2E verification tasks (all ✅) |
-| §12 Roadmap Phase 3 | Added 4 new ✅ items (tracking, checksum, multi-file, auto-numbering) |
-| §12 Roadmap Phase 4 | Added 5 new ✅ items, added remaining diff items |
-| §12 Roadmap Phase 5 | Added crates.io prep |
-| §13 Current Milestone | Title updated, added 10 new ✅ items, remaining updated |
-| §15 Design Principles | Added 3 new CLI responsibilities to diagram |
+| Header status | Added nested eager loading + Axum integration |
+| Runtime Boundary | Added nested eager loading, wrapper types, Send+Sync |
+| §1 Scalar Types | Updated DateTime/Decimal/Json → wrapper types |
+| §6 Entity Generator | Updated scalar types, dependencies, verified status |
+| §11 E2E Verification | Added 3 new ✅ tasks (nested, wrappers, Send+Sync) |
+| §12 Phase 2 | Added 3 new generator automation items |
+| §12 Phase 5 | Added nested eager loading verification |
+| §13 Current Milestone | Title updated, added 3 new ✅ items, remaining updated |
+| §14 Axum Example | Replaced with nested eager loading + DTO example |
+| §15 Design Principles | Added 3 new runtime responsibilities |
