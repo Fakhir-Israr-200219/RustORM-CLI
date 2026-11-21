@@ -476,7 +476,7 @@ mod tests {
 
         let sql = generate_migration(&schema).unwrap();
 
-        assert!(sql.contains("CREATE TABLE \"user_profiles\""));
+        assert!(sql.contains("CREATE TABLE IF NOT EXISTS \"user_profiles\""));
         assert!(sql.contains("\"display_name\" TEXT NOT NULL DEFAULT 'guest'"));
         assert!(sql.contains("\"id\" SERIAL NOT NULL"));
         assert!(sql.contains("CREATE INDEX \"user_profiles_display_name_idx\""));

@@ -28,7 +28,8 @@ pub fn generate(schema: &Schema) -> Result<String, GenerateError> {
 
     let mut output = String::new();
 
-        output.push_str("use serde::{Serialize, Deserialize};\n");
+    // // ✅ Changed: serde via rustorm re-export
+    // output.push_str("use rustorm::serde::{Serialize, Deserialize};\n");
     output.push_str("use rustorm::{\n    entity::{Column, Entity, RelationKey");
 
     if has_one_to_many || has_many_to_many {
@@ -157,7 +158,7 @@ fn update_data_fields(model: &Model) -> Vec<&crate::ast::Field> {
 }
 fn generate_update_struct(model: &Model, output: &mut String) {
     output.push_str(&format!(
-        "#[derive(Debug, serde::Serialize, serde::Deserialize)]\npub struct {}Update {{\n",
+        "#[derive(Debug, rustorm::serde::Serialize, rustorm::serde::Deserialize)]\npub struct {}Update {{\n",
         model.name
     ));
 
@@ -190,7 +191,9 @@ fn generate_model(
 ) -> Result<(), GenerateError> {
     let model_struct = format!("{}Model", model.name);
 
-    output.push_str("#[derive(Debug, serde::Serialize, serde::Deserialize, sqlx::FromRow)]\n");
+    output.push_str(
+        "#[derive(Debug, rustorm::serde::Serialize, rustorm::serde::Deserialize, sqlx::FromRow)]\n",
+    );
     output.push_str(&format!("pub struct {model_struct} {{\n"));
 
     for field in &model.fields {
@@ -366,7 +369,7 @@ fn generate_model(
 
 fn generate_create_struct(model: &Model, output: &mut String) {
     output.push_str(&format!(
-        "#[derive(Debug, serde::Serialize, serde::Deserialize)]\npub struct {}Create {{\n",
+        "#[derive(Debug, rustorm::serde::Serialize, rustorm::serde::Deserialize)]\npub struct {}Create {{\n",
         model.name
     ));
 
@@ -465,7 +468,6 @@ fn generate_bind_value(field: &crate::ast::Field, output: &mut String) {
         generate_non_null_bind_value(field, &format!("&{value}"), output);
     }
 }
-
 fn generate_non_null_bind_value(field: &crate::ast::Field, value: &str, output: &mut String) {
     let bind_value = match field.field_type {
         FieldType::Int => {
@@ -481,13 +483,13 @@ fn generate_non_null_bind_value(field: &crate::ast::Field, value: &str, output: 
             format!("rustorm::value::BindValue::F64(*({value}))")
         }
         FieldType::DateTime => {
-            format!("rustorm::value::BindValue::DateTime(({value}).clone())")
+            format!("rustorm::value::BindValue::DateTime(({value}).into_inner())")
         }
         FieldType::Decimal => {
-            format!("rustorm::value::BindValue::Decimal(({value}).clone())")
+            format!("rustorm::value::BindValue::Decimal(({value}).into_inner())")
         }
         FieldType::Json => {
-            format!("rustorm::value::BindValue::Json(({value}).clone())")
+            format!("rustorm::value::BindValue::Json(({value}).into_inner())")
         }
         FieldType::Model(_) => unreachable!("model fields are excluded"),
     };
@@ -773,9 +775,9 @@ fn rust_type(field_type: &FieldType, nullable: bool, is_array: bool) -> String {
         FieldType::String => "String".to_string(),
         FieldType::Boolean => "bool".to_string(),
         FieldType::Float => "f64".to_string(),
-        FieldType::DateTime => "chrono::NaiveDateTime".to_string(),
-        FieldType::Decimal => "rust_decimal::Decimal".to_string(),
-        FieldType::Json => "serde_json::Value".to_string(),
+        FieldType::DateTime => "rustorm::DateTime".to_string(),
+        FieldType::Decimal => "rustorm::Decimal".to_string(),
+        FieldType::Json => "rustorm::JsonValue".to_string(),
         FieldType::Model(name) => format!("{name}Model"),
     };
 
