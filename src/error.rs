@@ -2,6 +2,7 @@ use std::fmt;
 use std::path::PathBuf;
 
 #[derive(Debug)]
+#[allow(dead_code)]  // ← ADD THIS — these variants are for future use
 pub enum CliError {
     /// Schema parsing failed
     ParseError {

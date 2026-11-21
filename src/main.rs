@@ -363,7 +363,11 @@ fn run() -> CliResult<()> {
 
             let schema = parser::Parser::new(tokens)
                 .parse()
-                .map_err(|e| format!("Parser error: {e:?}"))?;
+                .map_err(|e| CliError::ParseError {
+                    line: 0,
+                    column: 0,
+                    message: format!("{e:?}"),
+                })?;
 
             validator::validate(&schema).map_err(|e| format!("Validation error: {e:?}"))?;
 
@@ -400,7 +404,11 @@ fn run() -> CliResult<()> {
 
     let schema = parser::Parser::new(tokens)
         .parse()
-        .map_err(|e| format!("Parser error: {e:?}"))?;
+        .map_err(|e| CliError::ParseError {
+            line: 0,
+            column: 0,
+            message: format!("{e:?}"),
+        })?;
 
     validator::validate(&schema).map_err(|e| format!("Validation error: {e:?}"))?;
 
@@ -440,7 +448,11 @@ fn run_generation(
 
     let schema = parser::Parser::new(tokens)
         .parse()
-        .map_err(|e| format!("Parser error: {e:?}"))?;
+        .map_err(|e| CliError::ParseError {
+            line: 0,
+            column: 0,
+            message: format!("{e:?}"),
+        })?;
 
     validator::validate(&schema).map_err(|e| format!("Validation error: {e:?}"))?;
 
