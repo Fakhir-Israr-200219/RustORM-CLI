@@ -919,9 +919,10 @@ mod tests {
         assert!(generated.contains("pub name: String"));
         assert!(generated.contains("pub active: bool"));
         assert!(generated.contains("pub score: f64"));
-        assert!(generated.contains("pub created_at: chrono::NaiveDateTime"));
-        assert!(generated.contains("pub price: rust_decimal::Decimal"));
-        assert!(generated.contains("pub metadata: serde_json::Value"));
+        // ✅ Updated: wrapper types instead of direct crate types
+        assert!(generated.contains("pub created_at: rustorm::DateTime"));
+        assert!(generated.contains("pub price: rustorm::Decimal"));
+        assert!(generated.contains("pub metadata: rustorm::JsonValue"));
     }
 
     #[test]

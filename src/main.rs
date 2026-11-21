@@ -1,13 +1,16 @@
 mod ast;
+mod error;
 mod generator;
 mod lexer;
 mod migration;
 mod naming;
 mod parser;
 mod validator;
+
 use crate::ast::Schema;
+use crate::error::{CliError, Result as CliResult};
 use notify::Watcher;
-use std::{env, fs, path::Path, process};
+use std::{env, fs, path::Path};
 
 const SCHEMA_TEMPLATE: &str = r#"// RustORM Schema
 // Documentation: https://github.com/Fakhir-Israr-200219/RustORM
@@ -20,119 +23,13 @@ model User {
 "#;
 
 fn main() {
-    if let Err(error) = run() {
-        eprintln!("Error: {error}");
-        process::exit(1);
+    if let Err(e) = run() {
+        eprintln!("{e}");
+        std::process::exit(1);
     }
 }
-fn run_generation(
-    schema_path: &Path,
-    entities_output: &Path,
-    migrations_dir: &Path,
-    snapshot_path: &Path,
-) -> Result<(), String> {
-    let source =
-        fs::read_to_string(schema_path).map_err(|e| format!("Failed to read schema: {e}"))?;
 
-    let tokens = lexer::tokenize(&source).map_err(|e| format!("Lexer error: {e:?}"))?;
-
-    let schema = parser::Parser::new(tokens)
-        .parse()
-        .map_err(|e| format!("Parser error: {e:?}"))?;
-
-    validator::validate(&schema).map_err(|e| format!("Validation error: {e:?}"))?;
-
-    // Snapshot check
-    let current_content = source.clone();
-    let schema_changed = if snapshot_path.exists() {
-        let old_content = fs::read_to_string(snapshot_path).unwrap_or_default();
-        old_content != current_content
-    } else {
-        true
-    };
-
-    if !schema_changed {
-        println!("📋 Schema unchanged. Skipping.");
-        return Ok(());
-    }
-
-    // Generate entities
-    fs::create_dir_all(entities_output.parent().unwrap())
-        .map_err(|e| format!("Failed to create generated dir: {e}"))?;
-
-    generator::write_entities(&schema, entities_output)
-        .map_err(|e| format!("Failed to generate entities: {e}"))?;
-
-    println!("  ✅ Generated: .rustorm/generated/entities.rs");
-
-    // Generate migration
-    fs::create_dir_all(migrations_dir)
-        .map_err(|e| format!("Failed to create migrations dir: {e}"))?;
-
-    let migration_sql = migration::generate_migration(&schema)?;
-    let migration_file = migrations_dir.join("0001_initial.sql");
-    fs::write(&migration_file, &migration_sql)
-        .map_err(|e| format!("Failed to write migration: {e}"))?;
-
-    println!("  ✅ Generated: .rustorm/migrations/0001_initial.sql");
-
-    // Save snapshot
-    // Load old snapshot for diffing
-    let old_snapshot_exists = snapshot_path.exists();
-    let old_snapshot: Option<Schema> = if old_snapshot_exists {
-        let snap_content = fs::read_to_string(&snapshot_path)
-            .ok()
-            .and_then(|s| serde_json::from_str(&s).ok());
-        snap_content
-    } else {
-        None
-    };
-
-    // Generate diff if old snapshot exists
-    if let Some(ref old_snap) = old_snapshot {
-        match migration::diff_schema(old_snap, &schema) {
-            Ok(diff_sql) => {
-                if !diff_sql.trim().is_empty() {
-                    // Find next migration number
-                    let mut next_num = 1u32;
-                    if let Ok(entries) = fs::read_dir(&migrations_dir) {
-                        for entry in entries.flatten() {
-                            if let Some(name) = entry.file_name().to_str() {
-                                if name.ends_with(".sql") {
-                                    if let Some(num_str) = name.split('_').next() {
-                                        if let Ok(n) = num_str.parse::<u32>() {
-                                            next_num = next_num.max(n + 1);
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    let diff_filename = format!("{:04}_schema_update.sql", next_num);
-                    let diff_path = migrations_dir.join(&diff_filename);
-                    fs::write(&diff_path, &diff_sql)
-                        .map_err(|e| format!("Failed to write diff migration: {e}"))?;
-                    println!("  🔄 Schema change detected! Generated: {}", diff_filename);
-                }
-            }
-            Err(e) => {
-                println!("  ⚠️  Diff generation failed: {e}");
-            }
-        }
-    }
-
-    // Save new snapshot
-    let snapshot_json = serde_json::to_string_pretty(&schema)
-        .map_err(|e| format!("Failed to serialize snapshot: {e}"))?;
-    fs::write(&snapshot_path, &snapshot_json)
-        .map_err(|e| format!("Failed to write snapshot: {e}"))?;
-    println!("  💾 Snapshot saved");
-
-    Ok(())
-}
-
-fn run() -> Result<(), String> {
+fn run() -> CliResult<()> {
     let args: Vec<String> = env::args().skip(1).collect();
 
     // 1. Handle --help / --version
@@ -154,14 +51,14 @@ fn run() -> Result<(), String> {
     let first_arg = args.first().map(|s| s.as_str()).unwrap_or("");
     if !matches!(first_arg, "migrate" | "init" | "dev") {
         if let Some(option) = args.iter().find(|arg| arg.starts_with('-')) {
-            return Err(format!(
-                "Unknown option '{option}'. Run 'RustORM-CLI --help' for usage."
-            ));
+            return Err(
+                format!("Unknown option '{option}'. Run 'rustorm --help' for usage.").into(),
+            );
         }
     }
 
     // 2. Handle Commands
-    let (command, schema_path, output_path) = match args.first().map(String::as_str) {
+    let (command, schema_path, _output_path) = match args.first().map(String::as_str) {
         Some("validate") => {
             validate_argument_count(&args, 1, 2, "validate [SCHEMA]")?;
             (
@@ -225,7 +122,9 @@ fn run() -> Result<(), String> {
             let snapshot_path = Path::new(".rustorm/migrations/snapshot.json");
 
             if !schema_path.exists() {
-                return Err("No .rustorm/schema.rustorm found. Run 'rustorm init' first.".into());
+                return Err(CliError::ConfigError(
+                    "No .rustorm/schema.rustorm found. Run 'rustorm init' first.".into(),
+                ));
             }
 
             println!("👀 Watching .rustorm/schema.rustorm for changes...");
@@ -296,7 +195,9 @@ fn run() -> Result<(), String> {
             if has_apply {
                 let db_url_owned = if let Some(pos) = args.iter().position(|a| a == "--database") {
                     args.get(pos + 1)
-                        .ok_or("--database requires a connection string")?
+                        .ok_or_else(|| {
+                            CliError::ConfigError("--database requires a connection string".into())
+                        })?
                         .clone()
                 } else {
                     load_database_url()?
@@ -323,7 +224,7 @@ fn run() -> Result<(), String> {
                 rt.block_on(async {
                     let pool = sqlx::PgPool::connect(db_url)
                         .await
-                        .map_err(|e| format!("Failed to connect to database: {e}"))?;
+                        .map_err(|e| CliError::ConnectionError(format!("Failed to connect to database: {e}")))?;
 
                     // Ensure tracking table exists
                     sqlx::raw_sql(
@@ -336,11 +237,14 @@ fn run() -> Result<(), String> {
                     )
                     .execute(&pool)
                     .await
-                    .map_err(|e| format!("Failed to create migration tracking table: {e}"))?;
+                    .map_err(|e| CliError::MigrationError(format!("Failed to create migration tracking table: {e}")))?;
 
                     // Collect all .sql files sorted by name
                     let mut migration_files: Vec<_> = fs::read_dir(&migrations_dir)
-                        .map_err(|e| format!("Failed to read migrations dir: {e}"))?
+                        .map_err(|e| CliError::IoError {
+                            path: migrations_dir.clone(),
+                            source: e,
+                        })?
                         .filter_map(|entry| entry.ok())
                         .filter(|entry| {
                             entry.path().extension()
@@ -352,7 +256,9 @@ fn run() -> Result<(), String> {
                     migration_files.sort_by_key(|e| e.file_name());
 
                     if migration_files.is_empty() {
-                        return Err("No migration files found in .rustorm/migrations/. Run 'rustorm dev' first.".into());
+                        return Err(CliError::MigrationError(
+                            "No migration files found in .rustorm/migrations/. Run 'rustorm dev' first.".into(),
+                        ));
                     }
 
                     println!("📋 Found {} migration file(s)\n", migration_files.len());
@@ -364,7 +270,10 @@ fn run() -> Result<(), String> {
                             .unwrap_or("unknown");
 
                         let sql = fs::read_to_string(&migration_path)
-                            .map_err(|e| format!("Failed to read {}: {e}", migration_name))?;
+                            .map_err(|e| CliError::IoError {
+                                path: migration_path.clone(),
+                                source: e,
+                            })?;
 
                         // Calculate checksum
                         use std::collections::hash_map::DefaultHasher;
@@ -380,17 +289,17 @@ fn run() -> Result<(), String> {
                         .bind(migration_name)
                         .fetch_optional(&pool)
                         .await
-                        .map_err(|e| format!("Failed to check migration history: {e}"))?;
+                        .map_err(|e| CliError::MigrationError(format!("Failed to check migration history: {e}")))?;
 
                         if let Some((existing_checksum,)) = existing {
                             if existing_checksum == checksum {
                                 println!("⏭️  {} already applied. Skipping.", migration_name);
                                 continue;
                             } else {
-                                return Err(format!(
+                                return Err(CliError::MigrationError(format!(
                                     "❌ Schema drift in '{}'! Checksum mismatch.\nOld: {}\nNew: {}",
                                     migration_name, existing_checksum, checksum
-                                ));
+                                )));
                             }
                         }
 
@@ -399,7 +308,7 @@ fn run() -> Result<(), String> {
                         sqlx::raw_sql(&sql)
                             .execute(&pool)
                             .await
-                            .map_err(|e| format!("Failed to apply {}: {e}", migration_name))?;
+                            .map_err(|e| CliError::MigrationError(format!("Failed to apply {}: {e}", migration_name)))?;
 
                         // Record in tracking table
                         sqlx::query(
@@ -409,7 +318,7 @@ fn run() -> Result<(), String> {
                         .bind(&checksum)
                         .execute(&pool)
                         .await
-                        .map_err(|e| format!("Failed to record {}: {e}", migration_name))?;
+                        .map_err(|e| CliError::MigrationError(format!("Failed to record {}: {e}", migration_name)))?;
 
                         println!("✅ {} applied successfully!", migration_name);
                     }
@@ -420,7 +329,7 @@ fn run() -> Result<(), String> {
                     )
                     .fetch_all(&pool)
                     .await
-                    .map_err(|e| format!("Failed to list tables: {e}"))?;
+                    .map_err(|e| CliError::MigrationError(format!("Failed to list tables: {e}")))?;
 
                     println!("\nTables in database:");
                     for (table,) in &tables {
@@ -428,7 +337,7 @@ fn run() -> Result<(), String> {
                     }
 
                     pool.close().await;
-                    Ok::<(), String>(())
+                    Ok::<(), CliError>(())
                 })?;
 
                 return Ok(());
@@ -448,52 +357,52 @@ fn run() -> Result<(), String> {
                 .unwrap_or("migrations/0001_initial.sql");
 
             let source = fs::read_to_string(schema_path)
-                .map_err(|error| format!("Failed to read schema '{schema_path}': {error}"))?;
+                .map_err(|e| format!("Failed to read schema '{schema_path}': {e}"))?;
 
-            let tokens =
-                lexer::tokenize(&source).map_err(|error| format!("Lexer error: {error:?}"))?;
+            let tokens = lexer::tokenize(&source).map_err(|e| format!("Lexer error: {e:?}"))?;
 
             let schema = parser::Parser::new(tokens)
                 .parse()
-                .map_err(|error| format!("Parser error: {error:?}"))?;
+                .map_err(|e| format!("Parser error: {e:?}"))?;
 
-            validator::validate(&schema).map_err(|error| format!("Validation error: {error:?}"))?;
+            validator::validate(&schema).map_err(|e| format!("Validation error: {e:?}"))?;
 
-            let sql = migration::generate_migration(&schema)?;
+            let sql =
+                migration::generate_migration(&schema).map_err(|e| CliError::GenerationError(e))?;
 
-            if let Some(parent) = Path::new(output_path).parent()
-                && !parent.as_os_str().is_empty()
-            {
-                fs::create_dir_all(parent)
-                    .map_err(|error| format!("Failed to create migration directory: {error}"))?;
+            if let Some(parent) = Path::new(output_path).parent() {
+                if !parent.as_os_str().is_empty() {
+                    fs::create_dir_all(parent)
+                        .map_err(|e| format!("Failed to create migration directory: {e}"))?;
+                }
             }
 
             fs::write(output_path, sql)
-                .map_err(|error| format!("Failed to write migration '{output_path}': {error}"))?;
+                .map_err(|e| format!("Failed to write migration '{output_path}': {e}"))?;
 
             println!("Migration generated: {output_path}");
             return Ok(());
         }
         Some(other) if Path::new(other).is_file() && args.len() == 1 => ("generate", other, None),
         Some(other) => {
-            return Err(format!(
+            return Err(CliError::ConfigError(format!(
                 "Unknown command '{other}'. Run 'rustorm --help' for usage."
-            ));
+            )));
         }
         None => ("generate", "rust.schema", None),
     };
 
-    // 3. Parse and Execute (for validate, generate, migrate)
+    // 3. Parse and Execute (for validate, generate)
     let source = fs::read_to_string(schema_path)
-        .map_err(|error| format!("Failed to read schema '{schema_path}': {error}"))?;
+        .map_err(|e| format!("Failed to read schema '{schema_path}': {e}"))?;
 
-    let tokens = lexer::tokenize(&source).map_err(|error| format!("Lexer error: {error:?}"))?;
+    let tokens = lexer::tokenize(&source).map_err(|e| format!("Lexer error: {e:?}"))?;
 
     let schema = parser::Parser::new(tokens)
         .parse()
-        .map_err(|error| format!("Parser error: {error:?}"))?;
+        .map_err(|e| format!("Parser error: {e:?}"))?;
 
-    validator::validate(&schema).map_err(|error| format!("Validation error: {error:?}"))?;
+    validator::validate(&schema).map_err(|e| format!("Validation error: {e:?}"))?;
 
     match command {
         "validate" => {
@@ -503,18 +412,127 @@ fn run() -> Result<(), String> {
             let output_path = "generated/entities.rs";
 
             generator::write_entities(&schema, output_path)
-                .map_err(|error| format!("Failed to write generated entities: {error}"))?;
+                .map_err(|e| format!("Failed to write generated entities: {e}"))?;
 
             println!("Schema is valid: {schema_path}");
             println!("Generated entities: {output_path}");
         }
-        _ => return Err(format!("Unsupported command '{command}'")),
+        _ => {
+            return Err(CliError::ConfigError(format!(
+                "Unsupported command '{command}'"
+            )));
+        }
     }
 
     Ok(())
 }
+
+fn run_generation(
+    schema_path: &Path,
+    entities_output: &Path,
+    migrations_dir: &Path,
+    snapshot_path: &Path,
+) -> CliResult<()> {
+    let source =
+        fs::read_to_string(schema_path).map_err(|e| format!("Failed to read schema: {e}"))?;
+
+    let tokens = lexer::tokenize(&source).map_err(|e| format!("Lexer error: {e:?}"))?;
+
+    let schema = parser::Parser::new(tokens)
+        .parse()
+        .map_err(|e| format!("Parser error: {e:?}"))?;
+
+    validator::validate(&schema).map_err(|e| format!("Validation error: {e:?}"))?;
+
+    // Snapshot check
+    let current_content = source.clone();
+    let schema_changed = if snapshot_path.exists() {
+        let old_content = fs::read_to_string(snapshot_path).unwrap_or_default();
+        old_content != current_content
+    } else {
+        true
+    };
+
+    if !schema_changed {
+        println!("📋 Schema unchanged. Skipping.");
+        return Ok(());
+    }
+
+    // Generate entities
+    fs::create_dir_all(entities_output.parent().unwrap())
+        .map_err(|e| format!("Failed to create generated dir: {e}"))?;
+
+    generator::write_entities(&schema, entities_output)
+        .map_err(|e| format!("Failed to generate entities: {e}"))?;
+
+    println!("  ✅ Generated: .rustorm/generated/entities.rs");
+
+    // Generate migration
+    fs::create_dir_all(migrations_dir)
+        .map_err(|e| format!("Failed to create migrations dir: {e}"))?;
+
+    let migration_sql =
+        migration::generate_migration(&schema).map_err(|e| CliError::GenerationError(e))?;
+    let migration_file = migrations_dir.join("0001_initial.sql");
+    fs::write(&migration_file, &migration_sql)
+        .map_err(|e| format!("Failed to write migration: {e}"))?;
+
+    println!("  ✅ Generated: .rustorm/migrations/0001_initial.sql");
+
+    // Load old snapshot for diffing
+    let old_snapshot: Option<Schema> = if snapshot_path.exists() {
+        fs::read_to_string(snapshot_path)
+            .ok()
+            .and_then(|s| serde_json::from_str(&s).ok())
+    } else {
+        None
+    };
+
+    // Generate diff if old snapshot exists
+    if let Some(ref old_snap) = old_snapshot {
+        match migration::diff_schema(old_snap, &schema) {
+            Ok(diff_sql) => {
+                if !diff_sql.trim().is_empty() {
+                    // Find next migration number
+                    let mut next_num = 1u32;
+                    if let Ok(entries) = fs::read_dir(migrations_dir) {
+                        for entry in entries.flatten() {
+                            if let Some(name) = entry.file_name().to_str() {
+                                if name.ends_with(".sql") {
+                                    if let Some(num_str) = name.split('_').next() {
+                                        if let Ok(n) = num_str.parse::<u32>() {
+                                            next_num = next_num.max(n + 1);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    let diff_filename = format!("{:04}_schema_update.sql", next_num);
+                    let diff_path = migrations_dir.join(&diff_filename);
+                    fs::write(&diff_path, &diff_sql)
+                        .map_err(|e| format!("Failed to write diff migration: {e}"))?;
+                    println!("  🔄 Schema change detected! Generated: {}", diff_filename);
+                }
+            }
+            Err(e) => {
+                println!("  ⚠️  Diff generation failed: {e}");
+            }
+        }
+    }
+
+    // Save new snapshot
+    let snapshot_json = serde_json::to_string_pretty(&schema)
+        .map_err(|e| format!("Failed to serialize snapshot: {e}"))?;
+    fs::write(snapshot_path, &snapshot_json)
+        .map_err(|e| format!("Failed to write snapshot: {e}"))?;
+    println!("  💾 Snapshot saved");
+
+    Ok(())
+}
+
 fn mask_database_url(url: &str) -> String {
-    // Mask password in database URL for safe display
     if let Some(at_pos) = url.find('@') {
         if let Some(colon_pos) = url[..at_pos].rfind(':') {
             let prefix = &url[..colon_pos + 1];
@@ -524,8 +542,9 @@ fn mask_database_url(url: &str) -> String {
     }
     url.to_string()
 }
-fn load_database_url() -> Result<String, String> {
-    // Priority: env var / .env > config.toml
+
+fn load_database_url() -> CliResult<String> {
+    // Priority: env var > .env > config.toml
     if let Ok(url) = std::env::var("DATABASE_URL") {
         return Ok(url);
     }
@@ -565,22 +584,24 @@ fn load_database_url() -> Result<String, String> {
         }
     }
 
-    Err("No database URL found.\n\
+    Err(CliError::ConfigError(
+        "No database URL found.\n\
          Create .rustorm/.env with: DATABASE_URL=postgres://...\n\
          Or create .rustorm/config.toml with: [database]\n  url = \"...\""
-        .into())
+            .into(),
+    ))
 }
-fn validate_argument_count(
-    args: &[String],
-    min: usize,
-    max: usize,
-    usage: &str,
-) -> Result<(), String> {
+
+fn validate_argument_count(args: &[String], min: usize, max: usize, usage: &str) -> CliResult<()> {
     if args.len() < min || args.len() > max {
-        return Err(format!("Invalid arguments. Usage: rustorm {}", usage));
+        return Err(CliError::ConfigError(format!(
+            "Invalid arguments. Usage: rustorm {}",
+            usage
+        )));
     }
     Ok(())
 }
+
 fn print_help() {
     println!(
         "rustorm {}\n\
