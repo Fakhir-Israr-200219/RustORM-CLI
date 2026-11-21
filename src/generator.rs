@@ -184,6 +184,34 @@ fn generate_update_struct(model: &Model, output: &mut String) {
 
     output.push_str("}\n\n");
 }
+
+fn is_back_reference(
+    current_model: &str,
+    relation: &ResolvedRelation,
+    all_relations: &[ResolvedRelation],
+) -> bool {
+    // M2M relations are never back-references (no cycle risk typically)
+    if matches!(relation.kind, RelationKind::ManyToMany) {
+        return false;
+    }
+
+    // Only ManyToOne and OneToOne can be back-references
+    if !matches!(
+        relation.kind,
+        RelationKind::ManyToOne | RelationKind::OneToOne
+    ) {
+        return false;
+    }
+
+    // Check if the target model has a forward relation pointing TO current model
+    all_relations.iter().any(|r| {
+        r.source_model == relation.target_model
+            && r.target_model == current_model
+            && matches!(r.kind, RelationKind::OneToMany | RelationKind::OneToOne)
+            && r.field_name != relation.field_name // Not the same relation reversed
+    })
+}
+
 fn generate_model(
     model: &Model,
     relations: &[ResolvedRelation],
@@ -205,6 +233,14 @@ fn generate_model(
             let relation_type = relation_model_type(field, relation);
 
             output.push_str("    #[sqlx(skip)]\n");
+
+            // Add #[serde(skip)] for back-references to prevent circular serialization
+            if let Some(rel) = relation {
+                if is_back_reference(&model.name, rel, relations) {
+                    output.push_str("    #[serde(skip)]\n");
+                }
+            }
+
             output.push_str(&format!(
                 "    pub {}: {},\n",
                 field_identifier(field),
@@ -214,13 +250,17 @@ fn generate_model(
             continue;
         }
 
+        let rust_field_name = field_identifier(field);
+        let db_column_name = column_name(field);
+
+        // If @map attribute exists and DB name differs from Rust field name, add #[sqlx(rename)]
+        if rust_field_name != db_column_name {
+            output.push_str(&format!("    #[sqlx(rename = \"{}\")]\n", db_column_name));
+        }
+
         let rust_type = rust_type(&field.field_type, field.nullable, field.is_array);
 
-        output.push_str(&format!(
-            "    pub {}: {},\n",
-            field_identifier(field),
-            rust_type
-        ));
+        output.push_str(&format!("    pub {}: {},\n", rust_field_name, rust_type));
     }
 
     output.push_str("}\n\n");
@@ -389,6 +429,15 @@ fn generate_create_struct(model: &Model, output: &mut String) {
         if is_id {
             continue;
         }
+        if field.attributes.iter().any(|a| {
+            matches!(
+                a,
+                FieldAttribute::Default(crate::ast::DefaultValue::Now)
+                    | FieldAttribute::Default(crate::ast::DefaultValue::AutoIncrement)
+            )
+        }) {
+            continue;
+        }
 
         let rust_type = rust_type(&field.field_type, field.nullable, field.is_array);
 
@@ -442,11 +491,32 @@ fn create_data_fields(model: &Model) -> Vec<&crate::ast::Field> {
         .fields
         .iter()
         .filter(|field| {
-            !matches!(field.field_type, FieldType::Model(_))
-                && !field
-                    .attributes
-                    .iter()
-                    .any(|attribute| matches!(attribute, FieldAttribute::Id))
+            // Exclude model relations
+            if matches!(field.field_type, FieldType::Model(_)) {
+                return false;
+            }
+
+            // Exclude @id fields
+            if field
+                .attributes
+                .iter()
+                .any(|a| matches!(a, FieldAttribute::Id))
+            {
+                return false;
+            }
+
+            // Exclude fields with @default(now()) or @default(autoincrement())
+            if field.attributes.iter().any(|a| {
+                matches!(
+                    a,
+                    FieldAttribute::Default(crate::ast::DefaultValue::Now)
+                        | FieldAttribute::Default(crate::ast::DefaultValue::AutoIncrement)
+                )
+            }) {
+                return false;
+            }
+
+            true
         })
         .collect()
 }
@@ -813,7 +883,8 @@ pub fn write_entities<P: AsRef<Path>>(schema: &Schema, output_path: P) -> Result
 mod tests {
     use super::*;
     use crate::ast::{
-        Field, FieldAttribute, FieldType, Model, ModelAttribute, RelationAttribute, Schema,
+        DefaultValue, Field, FieldAttribute, FieldType, Model, ModelAttribute, RelationAttribute,
+        Schema,
     };
 
     #[test]
@@ -1742,5 +1813,185 @@ Relation::new(Self::id, Profile::user_id);"
         assert!(generated.contains("pub user_posts: Vec<PostModel>"));
         assert!(generated.contains("self.user_posts = related;"));
         assert!(!generated.contains("self.userPosts = related;"));
+    }
+    #[test]
+    fn generates_sqlx_rename_for_mapped_columns() {
+        let schema = Schema {
+            models: vec![Model {
+                name: "User".to_string(),
+                fields: vec![
+                    Field {
+                        name: "id".to_string(),
+                        field_type: FieldType::Int,
+                        nullable: false,
+                        is_array: false,
+                        attributes: vec![FieldAttribute::Id],
+                    },
+                    Field {
+                        name: "bio".to_string(),
+                        field_type: FieldType::String,
+                        nullable: true,
+                        is_array: false,
+                        attributes: vec![FieldAttribute::Map("user_bio".to_string())],
+                    },
+                    Field {
+                        name: "name".to_string(),
+                        field_type: FieldType::String,
+                        nullable: false,
+                        is_array: false,
+                        attributes: vec![],
+                    },
+                ],
+                attributes: vec![],
+            }],
+        };
+
+        let generated = generate(&schema).unwrap();
+
+        // bio field should have #[sqlx(rename = "user_bio")]
+        assert!(generated.contains("#[sqlx(rename = \"user_bio\")]"));
+        assert!(generated.contains("pub bio: Option<String>"));
+
+        // name field should NOT have sqlx(rename) — names match
+        let name_idx = generated.find("pub name: String").unwrap();
+        let before_name = &generated[..name_idx];
+        let last_lines = &before_name[before_name.rfind('\n').unwrap_or(0)..];
+        assert!(!last_lines.contains("sqlx(rename"));
+    }
+    #[test]
+    fn generates_serde_skip_for_back_references() {
+        let schema = Schema {
+            models: vec![
+                Model {
+                    name: "User".to_string(),
+                    fields: vec![
+                        Field {
+                            name: "id".to_string(),
+                            field_type: FieldType::Int,
+                            nullable: false,
+                            is_array: false,
+                            attributes: vec![FieldAttribute::Id],
+                        },
+                        Field {
+                            name: "posts".to_string(),
+                            field_type: FieldType::Model("Post".to_string()),
+                            nullable: false,
+                            is_array: true,
+                            attributes: vec![],
+                        },
+                    ],
+                    attributes: vec![],
+                },
+                Model {
+                    name: "Post".to_string(),
+                    fields: vec![
+                        Field {
+                            name: "id".to_string(),
+                            field_type: FieldType::Int,
+                            nullable: false,
+                            is_array: false,
+                            attributes: vec![FieldAttribute::Id],
+                        },
+                        Field {
+                            name: "userId".to_string(),
+                            field_type: FieldType::Int,
+                            nullable: false,
+                            is_array: false,
+                            attributes: vec![],
+                        },
+                        Field {
+                            name: "user".to_string(),
+                            field_type: FieldType::Model("User".to_string()),
+                            nullable: false,
+                            is_array: false,
+                            attributes: vec![FieldAttribute::Relation(RelationAttribute {
+                                name: None,
+                                fields: vec!["userId".to_string()],
+                                references: vec!["id".to_string()],
+                                through: None,
+                                pivot_from: None,
+                                pivot_to: None,
+                                on_delete: None,
+                            })],
+                        },
+                    ],
+                    attributes: vec![],
+                },
+            ],
+        };
+
+        let generated = generate(&schema).unwrap();
+
+        // Post.user is a back-reference → should have #[serde(skip)]
+        let user_field_idx = generated.find("pub user: Option<Arc<UserModel>>").unwrap();
+        let before_user = &generated[..user_field_idx];
+        let lines_before: Vec<&str> = before_user.lines().rev().take(3).collect();
+        let context = lines_before.join("\n");
+        assert!(
+            context.contains("#[serde(skip)]"),
+            "Back-reference Post.user should have #[serde(skip)]. Context: {context}"
+        );
+
+        // User.posts is a forward relation → should NOT have #[serde(skip)]
+        let posts_field_idx = generated.find("pub posts: Vec<PostModel>").unwrap();
+        let before_posts = &generated[..posts_field_idx];
+        let lines_before_posts: Vec<&str> = before_posts.lines().rev().take(3).collect();
+        let context_posts = lines_before_posts.join("\n");
+        assert!(
+            !context_posts.contains("#[serde(skip)]"),
+            "Forward relation User.posts should NOT have #[serde(skip)]. Context: {context_posts}"
+        );
+    }
+    #[test]
+    fn excludes_default_now_fields_from_create_struct() {
+        let schema = Schema {
+            models: vec![Model {
+                name: "User".to_string(),
+                fields: vec![
+                    Field {
+                        name: "id".to_string(),
+                        field_type: FieldType::Int,
+                        nullable: false,
+                        is_array: false,
+                        attributes: vec![
+                            FieldAttribute::Id,
+                            FieldAttribute::Default(DefaultValue::AutoIncrement),
+                        ],
+                    },
+                    Field {
+                        name: "name".to_string(),
+                        field_type: FieldType::String,
+                        nullable: false,
+                        is_array: false,
+                        attributes: vec![],
+                    },
+                    Field {
+                        name: "createdAt".to_string(),
+                        field_type: FieldType::DateTime,
+                        nullable: false,
+                        is_array: false,
+                        attributes: vec![FieldAttribute::Default(DefaultValue::Now)],
+                    },
+                ],
+                attributes: vec![],
+            }],
+        };
+
+        let generated = generate(&schema).unwrap();
+
+        // Find UserCreate struct section
+        let create_start = generated.find("pub struct UserCreate").unwrap();
+        let create_end = generated[create_start..].find("\n}\n").unwrap() + create_start + 3;
+        let create_section = &generated[create_start..create_end];
+
+        assert!(create_section.contains("pub name: String"));
+        assert!(
+            !create_section.contains("created_at"),
+            "createdAt with @default(now()) should be excluded from Create struct"
+        );
+        assert!(
+            !create_section.contains("pub id"),
+            "id with @id should be excluded from Create struct"
+        );
     }
 }
