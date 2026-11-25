@@ -780,6 +780,11 @@ fn resolve_relations(schema: &Schema) -> Vec<ResolvedRelation> {
     let mut reverse_relations = Vec::new();
 
     for relation in &relations {
+        // ✅ FIX 1: Skip reverse generation for M2M — both sides are explicitly defined
+        if matches!(relation.kind, RelationKind::ManyToMany) {
+            continue;
+        }
+
         let Some(target_model) = schema
             .models
             .iter()
@@ -797,6 +802,18 @@ fn resolve_relations(schema: &Schema) -> Vec<ResolvedRelation> {
                 continue;
             }
 
+            // ✅ FIX 2: Skip if target model already has an explicit relation back
+            // This prevents duplicate constants when both sides define the relation
+            let already_has_explicit_back_relation = relations.iter().any(|r| {
+                r.source_model == relation.target_model
+                    && r.target_model == relation.source_model
+                    && r.field_name == field.name
+            });
+
+            if already_has_explicit_back_relation {
+                continue;
+            }
+
             let kind = if field.is_array {
                 RelationKind::OneToMany
             } else {
@@ -810,9 +827,9 @@ fn resolve_relations(schema: &Schema) -> Vec<ResolvedRelation> {
                 source_field: relation.target_field.clone(),
                 target_field: relation.source_field.clone(),
                 kind,
-                pivot_table: relation.pivot_table.clone(),
-                pivot_from: relation.pivot_to.clone(),
-                pivot_to: relation.pivot_from.clone(),
+                pivot_table: None,
+                pivot_from: None,
+                pivot_to: None,
             });
         }
     }
