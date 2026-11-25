@@ -235,10 +235,10 @@ fn generate_model(
             output.push_str("    #[sqlx(skip)]\n");
 
             // Add #[serde(skip)] for back-references to prevent circular serialization
-            if let Some(rel) = relation {
-                if is_back_reference(&model.name, rel, relations) {
-                    output.push_str("    #[serde(skip)]\n");
-                }
+            if let Some(rel) = relation
+                && is_back_reference(&model.name, rel, relations)
+            {
+                output.push_str("    #[serde(skip)]\n");
             }
 
             output.push_str(&format!(

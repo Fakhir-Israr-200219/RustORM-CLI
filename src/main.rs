@@ -49,12 +49,10 @@ fn run() -> CliResult<()> {
 
     // Only reject unknown options for simple commands (not migrate/init/dev)
     let first_arg = args.first().map(|s| s.as_str()).unwrap_or("");
-    if !matches!(first_arg, "migrate" | "init" | "dev") {
-        if let Some(option) = args.iter().find(|arg| arg.starts_with('-')) {
-            return Err(
-                format!("Unknown option '{option}'. Run 'rustorm --help' for usage.").into(),
-            );
-        }
+    if !matches!(first_arg, "migrate" | "init" | "dev")
+        && let Some(option) = args.iter().find(|arg| arg.starts_with('-'))
+    {
+        return Err(format!("Unknown option '{option}'. Run 'zyvor --help' for usage.").into());
     }
 
     // 2. Handle Commands
@@ -138,10 +136,10 @@ fn run() -> CliResult<()> {
 
             let mut watcher =
                 notify::recommended_watcher(move |res: Result<notify::Event, notify::Error>| {
-                    if let Ok(event) = res {
-                        if event.kind.is_modify() || event.kind.is_create() {
-                            let _ = tx.send(());
-                        }
+                    if let Ok(event) = res
+                        && (event.kind.is_modify() || event.kind.is_create())
+                    {
+                        let _ = tx.send(());
                     }
                 })
                 .map_err(|e| format!("Failed to create file watcher: {e}"))?;
@@ -151,24 +149,14 @@ fn run() -> CliResult<()> {
                 .map_err(|e| format!("Failed to watch schema file: {e}"))?;
 
             // Watch loop
-            loop {
-                match rx.recv() {
-                    Ok(_) => {
-                        std::thread::sleep(std::time::Duration::from_millis(300));
-                        while rx.try_recv().is_ok() {}
+            while rx.recv().is_ok() {
+                std::thread::sleep(std::time::Duration::from_millis(300));
+                while rx.try_recv().is_ok() {}
 
-                        println!("\n🔄 Schema change detected! Regenerating...");
-                        match run_generation(
-                            schema_path,
-                            entities_output,
-                            migrations_dir,
-                            snapshot_path,
-                        ) {
-                            Ok(()) => println!("✅ Regeneration complete\n"),
-                            Err(e) => eprintln!("❌ Regeneration failed: {e}\n"),
-                        }
-                    }
-                    Err(_) => break,
+                println!("\n🔄 Schema change detected! Regenerating...");
+                match run_generation(schema_path, entities_output, migrations_dir, snapshot_path) {
+                    Ok(()) => println!("✅ Regeneration complete\n"),
+                    Err(e) => eprintln!("❌ Regeneration failed: {e}\n"),
                 }
             }
 
@@ -371,14 +359,13 @@ fn run() -> CliResult<()> {
 
             validator::validate(&schema).map_err(|e| format!("Validation error: {e:?}"))?;
 
-            let sql =
-                migration::generate_migration(&schema).map_err(|e| CliError::GenerationError(e))?;
+            let sql = migration::generate_migration(&schema).map_err(CliError::GenerationError)?;
 
-            if let Some(parent) = Path::new(output_path).parent() {
-                if !parent.as_os_str().is_empty() {
-                    fs::create_dir_all(parent)
-                        .map_err(|e| format!("Failed to create migration directory: {e}"))?;
-                }
+            if let Some(parent) = Path::new(output_path).parent()
+                && !parent.as_os_str().is_empty()
+            {
+                fs::create_dir_all(parent)
+                    .map_err(|e| format!("Failed to create migration directory: {e}"))?;
             }
 
             fs::write(output_path, sql)
@@ -484,7 +471,7 @@ fn run_generation(
         .map_err(|e| format!("Failed to create migrations dir: {e}"))?;
 
     let migration_sql =
-        migration::generate_migration(&schema).map_err(|e| CliError::GenerationError(e))?;
+        migration::generate_migration(&schema).map_err(CliError::GenerationError)?;
     let migration_file = migrations_dir.join("0001_initial.sql");
     fs::write(&migration_file, &migration_sql)
         .map_err(|e| format!("Failed to write migration: {e}"))?;
@@ -509,14 +496,12 @@ fn run_generation(
                     let mut next_num = 1u32;
                     if let Ok(entries) = fs::read_dir(migrations_dir) {
                         for entry in entries.flatten() {
-                            if let Some(name) = entry.file_name().to_str() {
-                                if name.ends_with(".sql") {
-                                    if let Some(num_str) = name.split('_').next() {
-                                        if let Ok(n) = num_str.parse::<u32>() {
-                                            next_num = next_num.max(n + 1);
-                                        }
-                                    }
-                                }
+                            if let Some(name) = entry.file_name().to_str()
+                                && name.ends_with(".sql")
+                                && let Some(num_str) = name.split('_').next()
+                                && let Ok(n) = num_str.parse::<u32>()
+                            {
+                                next_num = next_num.max(n + 1);
                             }
                         }
                     }
@@ -545,12 +530,12 @@ fn run_generation(
 }
 
 fn mask_database_url(url: &str) -> String {
-    if let Some(at_pos) = url.find('@') {
-        if let Some(colon_pos) = url[..at_pos].rfind(':') {
-            let prefix = &url[..colon_pos + 1];
-            let suffix = &url[at_pos..];
-            return format!("{prefix}****{suffix}");
-        }
+    if let Some(at_pos) = url.find('@')
+        && let Some(colon_pos) = url[..at_pos].rfind(':')
+    {
+        let prefix = &url[..colon_pos + 1];
+        let suffix = &url[at_pos..];
+        return format!("{prefix}****{suffix}");
     }
     url.to_string()
 }
@@ -571,10 +556,10 @@ fn load_database_url() -> CliResult<String> {
             if line.starts_with('#') || line.is_empty() {
                 continue;
             }
-            if let Some((key, value)) = line.split_once('=') {
-                if key.trim() == "DATABASE_URL" {
-                    return Ok(value.trim().to_string());
-                }
+            if let Some((key, value)) = line.split_once('=')
+                && key.trim() == "DATABASE_URL"
+            {
+                return Ok(value.trim().to_string());
             }
         }
     }
